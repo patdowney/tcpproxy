@@ -31,6 +31,14 @@ func (p *Proxy) AddHTTPHostRoute(ipPort, httpHost string, dest Target) {
 	p.AddHTTPHostMatchRoute(ipPort, equals(httpHost), dest)
 }
 
+// RemoveHTTPHostRoute removes a route to the ipPort listener
+//
+// The ipPort is any net.Listen TCP address. If it hasn't been registered with
+// tcpproxy this is a noop
+func (p *Proxy) RemoveHTTPHostRoute(ipPort, httpHost string, dest Target) {
+	p.RemoveHTTPHostMatchRoute(ipPort, equals(httpHost), dest)
+}
+
 // AddHTTPHostMatchRoute appends a route to the ipPort listener that
 // routes to dest if the incoming HTTP/1.x Host header name is
 // accepted by matcher. If it doesn't match, rule processing continues
@@ -39,6 +47,14 @@ func (p *Proxy) AddHTTPHostRoute(ipPort, httpHost string, dest Target) {
 // The ipPort is any valid net.Listen TCP address.
 func (p *Proxy) AddHTTPHostMatchRoute(ipPort string, match Matcher, dest Target) {
 	p.addRoute(ipPort, httpHostMatch{match, dest})
+}
+
+// RemoveHTTPHostMatchRoute removes a route to the ipPort listener
+//
+// The ipPort is any net.Listen TCP address. If it hasn't been registered with
+// tcpproxy this is a noop
+func (p *Proxy) RemoveHTTPHostMatchRoute(ipPort string, match Matcher, dest Target) {
+	p.removeRoute(ipPort, httpHostMatch{match, dest})
 }
 
 type httpHostMatch struct {

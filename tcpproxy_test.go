@@ -175,6 +175,61 @@ func testProxy(t *testing.T, front net.Listener) *Proxy {
 	}
 }
 
+func TestConfigAddRemoveRoute(t *testing.T) {
+	r1 := fixedTarget{To("foo.com:443")}
+	r2 := fixedTarget{To("bar.com:443")}
+
+	cfg := &config{}
+
+	cfg.AddRoute(r1)
+	cfg.AddRoute(r2)
+
+	routes := cfg.Routes()
+	if len(routes) != 2 {
+		t.Fatalf("got %d routes, want 1", len(routes))
+	}
+
+	cfg.RemoveRoute(r1)
+
+	routes = cfg.Routes()
+	if len(routes) != 1 {
+		t.Fatalf("got %d routes, want 1", len(routes))
+	}
+
+	if routes[0] != r2 {
+		t.Fatalf("got %s, want %s", r2, routes[0])
+	}
+}
+
+func TestProxyAddRemoveRoute(t *testing.T) {
+	front := newLocalListener(t)
+	defer front.Close()
+
+	r1 := To("foo.com:443")
+	r1Fixed := fixedTarget{r1}
+	r2 := To("bar.com:443")
+
+	p := testProxy(t, front)
+	p.AddRoute(testFrontAddr, r1)
+	p.AddRoute(testFrontAddr, r2)
+
+	config := p.configFor(testFrontAddr)
+	routes := config.Routes()
+	if len(routes) != 2 {
+		t.Fatalf("got %d routes, want 2", len(routes))
+	}
+
+	p.RemoveRoute(testFrontAddr, r2)
+	routes = config.Routes()
+	if len(routes) != 1 {
+		t.Fatalf("got %d routes, want 1", len(routes))
+	}
+
+	if routes[0] != r1Fixed {
+		t.Fatalf("got %s, want %s", r1Fixed, routes[0])
+	}
+}
+
 func TestProxyAlwaysMatch(t *testing.T) {
 	front := newLocalListener(t)
 	defer front.Close()

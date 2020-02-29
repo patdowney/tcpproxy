@@ -38,6 +38,14 @@ func (p *Proxy) AddSNIRoute(ipPort, sni string, dest Target) {
 	p.AddSNIMatchRoute(ipPort, equals(sni), dest)
 }
 
+// RemoveSNIRoute removes a route from the ipPort listener
+//
+// The ipPort is any net.Listen TCP address, if it hasn't been registered with
+// tcpproxy this is a noop.
+func (p *Proxy) RemoveSNIRoute(ipPort, sni string, dest Target) {
+	p.RemoveSNIMatchRoute(ipPort, equals(sni), dest)
+}
+
 // AddSNIMatchRoute appends a route to the ipPort listener that routes
 // to dest if the incoming TLS SNI server name is accepted by
 // matcher. If it doesn't match, rule processing continues for any
@@ -58,6 +66,21 @@ func (p *Proxy) AddSNIMatchRoute(ipPort string, matcher Matcher, dest Target) {
 	}
 
 	p.addRoute(ipPort, sniMatch{matcher, dest})
+}
+
+// RemoveSNIMatchRoute removes a route from the ipPort listener
+//
+// The ipPort is any net.Listen TCP address, if it hasn't been registered with
+// tcpproxy this is a noop.
+func (p *Proxy) RemoveSNIMatchRoute(ipPort string, matcher Matcher, dest Target) {
+
+	if p.configExists(ipPort) {
+		cfg := p.configFor(ipPort)
+
+		p.removeRoute(ipPort, &acmeMatch{cfg})
+
+		p.removeRoute(ipPort, sniMatch{matcher, dest})
+	}
 }
 
 // AddStopACMESearch prevents ACME probing of subsequent SNI routes.

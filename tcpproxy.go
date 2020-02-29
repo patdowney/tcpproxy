@@ -60,6 +60,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -69,6 +70,7 @@ import (
 // The order that routes are added in matters; each is matched in the order
 // registered.
 type Proxy struct {
+	mu sync.Mutex
 	configs map[string]*config // ip:port => config
 
 	lns   []net.Listener
@@ -80,6 +82,14 @@ type Proxy struct {
 	// The provided net is always "tcp".
 	ListenFunc func(net, laddr string) (net.Listener, error)
 }
+
+//
+//func (p *Proxy) Configs() map[string]*config {
+//	p.mu.Lock()
+//	defer p.mu.Unlock()
+//
+//	return p.configs
+//}
 
 // Matcher reports whether hostname matches the Matcher's criteria.
 type Matcher func(ctx context.Context, hostname string) bool
@@ -93,9 +103,40 @@ func equals(want string) Matcher {
 
 // config contains the proxying state for one listener.
 type config struct {
+	mu     sync.Mutex
+
 	routes      []route
 	acmeTargets []Target // accumulates targets that should be probed for acme.
 	stopACME    bool     // if true, AddSNIRoute doesn't add targets to acmeTargets.
+}
+
+func (c *config) AddRoute(r route) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.routes = append(c.routes, r)
+}
+
+func (c *config) Routes() []route {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.routes
+}
+
+func (c *config) RemoveRoute(r route) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	var newRoutes []route
+
+	for _, i := range c.routes {
+		if i != r {
+			newRoutes = append(newRoutes, i)
+		}
+	}
+
+	c.routes = newRoutes
 }
 
 // A route matches a connection to a target.
@@ -121,6 +162,9 @@ func (p *Proxy) netListen() func(net, laddr string) (net.Listener, error) {
 }
 
 func (p *Proxy) configFor(ipPort string) *config {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	if p.configs == nil {
 		p.configs = make(map[string]*config)
 	}
@@ -130,9 +174,20 @@ func (p *Proxy) configFor(ipPort string) *config {
 	return p.configs[ipPort]
 }
 
+func (p *Proxy) configExists(ipPort string) bool {
+	return p.configs[ipPort] != nil
+}
+
 func (p *Proxy) addRoute(ipPort string, r route) {
 	cfg := p.configFor(ipPort)
-	cfg.routes = append(cfg.routes, r)
+	cfg.AddRoute(r)
+}
+
+func (p *Proxy) removeRoute(ipPort string, r route) {
+	if p.configExists(ipPort) {
+		cfg := p.configFor(ipPort)
+		cfg.RemoveRoute(r)
+	}
 }
 
 // AddRoute appends an always-matching route to the ipPort listener,
@@ -144,6 +199,13 @@ func (p *Proxy) addRoute(ipPort string, r route) {
 // The ipPort is any valid net.Listen TCP address.
 func (p *Proxy) AddRoute(ipPort string, dest Target) {
 	p.addRoute(ipPort, fixedTarget{dest})
+}
+
+// RemoveRoute removes the specified target from the ipPort listener
+//
+// This method won't remove an ipPort listener if there are no routes remaining
+func (p *Proxy) RemoveRoute(ipPort string, dest Target) {
+	p.removeRoute(ipPort, fixedTarget{dest})
 }
 
 type fixedTarget struct {
@@ -200,7 +262,7 @@ func (p *Proxy) Start() error {
 			return err
 		}
 		p.lns = append(p.lns, ln)
-		go p.serveListener(errc, ln, config.routes)
+		go p.serveListener(errc, ln, config)
 	}
 	go p.awaitFirstError(errc)
 	return nil
@@ -211,22 +273,22 @@ func (p *Proxy) awaitFirstError(errc <-chan error) {
 	close(p.donec)
 }
 
-func (p *Proxy) serveListener(ret chan<- error, ln net.Listener, routes []route) {
+func (p *Proxy) serveListener(ret chan<- error, ln net.Listener, cfg *config) {
 	for {
 		c, err := ln.Accept()
 		if err != nil {
 			ret <- err
 			return
 		}
-		go p.serveConn(c, routes)
+		go p.serveConn(c, cfg)
 	}
 }
 
 // serveConn runs in its own goroutine and matches c against routes.
 // It returns whether it matched purely for testing.
-func (p *Proxy) serveConn(c net.Conn, routes []route) bool {
+func (p *Proxy) serveConn(c net.Conn, cfg *config) bool {
 	br := bufio.NewReader(c)
-	for _, route := range routes {
+	for _, route := range cfg.Routes() {
 		if target, hostName := route.match(br); target != nil {
 			if n := br.Buffered(); n > 0 {
 				peeked, _ := br.Peek(br.Buffered())
