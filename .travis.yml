@@ -2,11 +2,12 @@ language: go
 go:
 - "1.12"
 - "1.13"
+- "1.14"
 - tip
 os:
 - linux
 install:
-- go get github.com/golang/lint/golint
+- go get golang.org/x/lint/golint
 before_script: 
 script:
 - go get -t ./...
@@ -18,7 +19,7 @@ script:
 jobs:
   include:
     - stage: deploy
-      go: "1.13"
+      go: "1.14"
       install:
       - gem install fpm
       script:

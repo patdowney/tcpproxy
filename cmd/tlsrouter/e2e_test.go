@@ -182,7 +182,7 @@ func serveTLS(t *testing.T, value string, understandProxy bool, domains ...strin
 }
 
 func selfSignedCert(domains []string) (tls.Certificate, *x509.CertPool, error) {
-	pkey, err := rsa.GenerateKey(rand.Reader, 512)
+	pkey, err := rsa.GenerateKey(rand.Reader, 1024)
 	if err != nil {
 		return tls.Certificate{}, nil, err
 	}
