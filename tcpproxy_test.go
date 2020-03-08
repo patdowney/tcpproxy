@@ -181,22 +181,22 @@ func TestConfigAddRemoveRoute(t *testing.T) {
 
 	cfg := &config{}
 
-	cfg.AddRoute(r1)
-	cfg.AddRoute(r2)
+	r1Id := cfg.AddRoute(r1)
+	r2Id := cfg.AddRoute(r2)
 
 	routes := cfg.Routes()
 	if len(routes) != 2 {
 		t.Fatalf("got %d routes, want 1", len(routes))
 	}
 
-	cfg.RemoveRoute(r1)
+	cfg.RemoveRouteById(r1Id)
 
 	routes = cfg.Routes()
 	if len(routes) != 1 {
 		t.Fatalf("got %d routes, want 1", len(routes))
 	}
 
-	if routes[0] != r2 {
+	if routes[0].Id != r2Id {
 		t.Fatalf("got %s, want %s", r2, routes[0])
 	}
 }
@@ -206,12 +206,11 @@ func TestProxyAddRemoveRoute(t *testing.T) {
 	defer front.Close()
 
 	r1 := To("foo.com:443")
-	r1Fixed := fixedTarget{r1}
 	r2 := To("bar.com:443")
 
 	p := testProxy(t, front)
-	p.AddRoute(testFrontAddr, r1)
-	p.AddRoute(testFrontAddr, r2)
+	r1Id := p.AddRoute(testFrontAddr, r1)
+	r2Id := p.AddRoute(testFrontAddr, r2)
 
 	config := p.configFor(testFrontAddr)
 	routes := config.Routes()
@@ -219,14 +218,14 @@ func TestProxyAddRemoveRoute(t *testing.T) {
 		t.Fatalf("got %d routes, want 2", len(routes))
 	}
 
-	p.RemoveRoute(testFrontAddr, r2)
+	p.RemoveRouteById(testFrontAddr, r2Id)
 	routes = config.Routes()
 	if len(routes) != 1 {
 		t.Fatalf("got %d routes, want 1", len(routes))
 	}
 
-	if routes[0] != r1Fixed {
-		t.Fatalf("got %s, want %s", r1Fixed, routes[0])
+	if routes[0].Id != r1Id {
+		t.Fatalf("got %s, want %s", r1Id, routes[0].Id)
 	}
 }
 

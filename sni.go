@@ -22,6 +22,8 @@ import (
 	"io"
 	"net"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 // AddSNIRoute appends a route to the ipPort listener that routes to
@@ -34,16 +36,16 @@ import (
 // with AddStopACMESearch.
 //
 // The ipPort is any valid net.Listen TCP address.
-func (p *Proxy) AddSNIRoute(ipPort, sni string, dest Target) {
-	p.AddSNIMatchRoute(ipPort, equals(sni), dest)
+func (p *Proxy) AddSNIRoute(ipPort, sni string, dest Target) uuid.UUID {
+	return p.AddSNIMatchRoute(ipPort, equals(sni), dest)
 }
 
 // RemoveSNIRoute removes a route from the ipPort listener
 //
 // The ipPort is any net.Listen TCP address, if it hasn't been registered with
 // tcpproxy this is a noop.
-func (p *Proxy) RemoveSNIRoute(ipPort, sni string, dest Target) {
-	p.RemoveSNIMatchRoute(ipPort, equals(sni), dest)
+func (p *Proxy) RemoveSNIRouteById(ipPort string, id uuid.UUID) {
+	p.RemoveSNIMatchRouteById(ipPort, id)
 }
 
 // AddSNIMatchRoute appends a route to the ipPort listener that routes
@@ -56,31 +58,28 @@ func (p *Proxy) RemoveSNIRoute(ipPort, sni string, dest Target) {
 // with AddStopACMESearch.
 //
 // The ipPort is any valid net.Listen TCP address.
-func (p *Proxy) AddSNIMatchRoute(ipPort string, matcher Matcher, dest Target) {
+func (p *Proxy) AddSNIMatchRoute(ipPort string, matcher Matcher, dest Target) uuid.UUID {
+
+	routeId := uuid.New()
 	cfg := p.configFor(ipPort)
 	if !cfg.stopACME {
 		if len(cfg.acmeTargets) == 0 {
-			p.addRoute(ipPort, &acmeMatch{cfg})
+			p.addRouteWithId(ipPort, &acmeMatch{cfg}, routeId)
 		}
 		cfg.acmeTargets = append(cfg.acmeTargets, dest)
 	}
 
-	p.addRoute(ipPort, sniMatch{matcher, dest})
+	p.addRouteWithId(ipPort, sniMatch{matcher, dest}, routeId)
+
+	return routeId
 }
 
 // RemoveSNIMatchRoute removes a route from the ipPort listener
 //
 // The ipPort is any net.Listen TCP address, if it hasn't been registered with
 // tcpproxy this is a noop.
-func (p *Proxy) RemoveSNIMatchRoute(ipPort string, matcher Matcher, dest Target) {
-
-	if p.configExists(ipPort) {
-		cfg := p.configFor(ipPort)
-
-		p.removeRoute(ipPort, &acmeMatch{cfg})
-
-		p.removeRoute(ipPort, sniMatch{matcher, dest})
-	}
+func (p *Proxy) RemoveSNIMatchRouteById(ipPort string, id uuid.UUID) {
+	p.removeRouteById(ipPort, id)
 }
 
 // AddStopACMESearch prevents ACME probing of subsequent SNI routes.

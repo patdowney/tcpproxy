@@ -60,8 +60,11 @@ import (
 	"io"
 	"log"
 	"net"
+	"regexp"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Proxy is a proxy. Its zero value is a valid proxy that does
@@ -70,7 +73,7 @@ import (
 // The order that routes are added in matters; each is matched in the order
 // registered.
 type Proxy struct {
-	mu sync.Mutex
+	mu      sync.Mutex
 	configs map[string]*config // ip:port => config
 
 	lns   []net.Listener
@@ -101,42 +104,61 @@ func equals(want string) Matcher {
 	}
 }
 
-// config contains the proxying state for one listener.
-type config struct {
-	mu     sync.Mutex
-
-	routes      []route
-	acmeTargets []Target // accumulates targets that should be probed for acme.
-	stopACME    bool     // if true, AddSNIRoute doesn't add targets to acmeTargets.
+func re(r regexp.Regexp) Matcher {
+	return func(_ context.Context, got string) bool {
+		return r.MatchString(got)
+	}
 }
 
-func (c *config) AddRoute(r route) {
+// config contains the proxying state for one listener.
+type config struct {
+	mu          sync.Mutex
+	routes      []routeWithId
+	acmeTargets []Target // accumulates targets that should be probed for acme.
+
+	stopACME bool // if true, AddSNIRoute doesn't add targets to acmeTargets.
+
+	defaultTarget Target
+}
+
+func (c *config) AddRoute(r route) uuid.UUID {
+	return c.AddRouteWithId(r, uuid.New())
+}
+
+func (c *config) AddRouteWithId(r route, id uuid.UUID) uuid.UUID {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.routes = append(c.routes, r)
+	c.routes = append(c.routes, routeWithId{id, r})
+
+	return id
 }
 
-func (c *config) Routes() []route {
+func (c *config) Routes() []routeWithId {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	return c.routes
 }
 
-func (c *config) RemoveRoute(r route) {
+func (c *config) RemoveRouteById(routeId uuid.UUID) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	var newRoutes []route
+	var newRoutes []routeWithId
 
 	for _, i := range c.routes {
-		if i != r {
+		if i.Id != routeId {
 			newRoutes = append(newRoutes, i)
 		}
 	}
 
 	c.routes = newRoutes
+}
+
+type routeWithId struct {
+	Id    uuid.UUID
+	Route route
 }
 
 // A route matches a connection to a target.
@@ -178,15 +200,20 @@ func (p *Proxy) configExists(ipPort string) bool {
 	return p.configs[ipPort] != nil
 }
 
-func (p *Proxy) addRoute(ipPort string, r route) {
+func (p *Proxy) addRoute(ipPort string, r route) uuid.UUID {
 	cfg := p.configFor(ipPort)
-	cfg.AddRoute(r)
+	return cfg.AddRoute(r)
 }
 
-func (p *Proxy) removeRoute(ipPort string, r route) {
+func (p *Proxy) addRouteWithId(ipPort string, r route, id uuid.UUID) {
+	cfg := p.configFor(ipPort)
+	cfg.AddRouteWithId(r, id)
+}
+
+func (p *Proxy) removeRouteById(ipPort string, routeId uuid.UUID) {
 	if p.configExists(ipPort) {
 		cfg := p.configFor(ipPort)
-		cfg.RemoveRoute(r)
+		cfg.RemoveRouteById(routeId)
 	}
 }
 
@@ -197,15 +224,20 @@ func (p *Proxy) removeRoute(ipPort string, r route) {
 // proxies), or as the final fallback rule for an ipPort.
 //
 // The ipPort is any valid net.Listen TCP address.
-func (p *Proxy) AddRoute(ipPort string, dest Target) {
-	p.addRoute(ipPort, fixedTarget{dest})
+func (p *Proxy) AddRoute(ipPort string, dest Target) uuid.UUID {
+	return p.addRoute(ipPort, fixedTarget{dest})
 }
 
 // RemoveRoute removes the specified target from the ipPort listener
 //
 // This method won't remove an ipPort listener if there are no routes remaining
-func (p *Proxy) RemoveRoute(ipPort string, dest Target) {
-	p.removeRoute(ipPort, fixedTarget{dest})
+func (p *Proxy) RemoveRouteById(ipPort string, routeId uuid.UUID) {
+	p.removeRouteById(ipPort, routeId)
+}
+
+func (p *Proxy) SetDefaultTarget(ipPort string, dest Target) {
+	cfg := p.configFor(ipPort)
+	cfg.defaultTarget = dest
 }
 
 type fixedTarget struct {
@@ -288,8 +320,8 @@ func (p *Proxy) serveListener(ret chan<- error, ln net.Listener, cfg *config) {
 // It returns whether it matched purely for testing.
 func (p *Proxy) serveConn(c net.Conn, cfg *config) bool {
 	br := bufio.NewReader(c)
-	for _, route := range cfg.Routes() {
-		if target, hostName := route.match(br); target != nil {
+	for _, routeWithId := range cfg.Routes() {
+		if target, hostName := routeWithId.Route.match(br); target != nil {
 			if n := br.Buffered(); n > 0 {
 				peeked, _ := br.Peek(br.Buffered())
 				c = &Conn{
@@ -298,12 +330,20 @@ func (p *Proxy) serveConn(c net.Conn, cfg *config) bool {
 					Conn:     c,
 				}
 			}
+			log.Printf("tcpproxy: routing to #{hostName}")
 			target.HandleConn(c)
 			return true
 		}
+
 	}
 	// TODO: hook for this?
-	log.Printf("tcpproxy: no routes matched conn %v/%v; closing", c.RemoteAddr().String(), c.LocalAddr().String())
+	if cfg.defaultTarget != nil {
+		log.Printf("tcpproxy: no matching routes found. using default target %s", cfg.defaultTarget)
+		cfg.defaultTarget.HandleConn(c)
+		return true
+	} else {
+		log.Printf("tcpproxy: no routes matched conn %v/%v; closing", c.RemoteAddr().String(), c.LocalAddr().String())
+	}
 	c.Close()
 	return false
 }

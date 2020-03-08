@@ -19,6 +19,8 @@ import (
 	"bytes"
 	"context"
 	"net/http"
+
+	"github.com/google/uuid"
 )
 
 // AddHTTPHostRoute appends a route to the ipPort listener that
@@ -27,16 +29,16 @@ import (
 // additional routes on ipPort.
 //
 // The ipPort is any valid net.Listen TCP address.
-func (p *Proxy) AddHTTPHostRoute(ipPort, httpHost string, dest Target) {
-	p.AddHTTPHostMatchRoute(ipPort, equals(httpHost), dest)
+func (p *Proxy) AddHTTPHostRoute(ipPort, httpHost string, dest Target) uuid.UUID {
+	return p.AddHTTPHostMatchRoute(ipPort, equals(httpHost), dest)
 }
 
 // RemoveHTTPHostRoute removes a route to the ipPort listener
 //
 // The ipPort is any net.Listen TCP address. If it hasn't been registered with
 // tcpproxy this is a noop
-func (p *Proxy) RemoveHTTPHostRoute(ipPort, httpHost string, dest Target) {
-	p.RemoveHTTPHostMatchRoute(ipPort, equals(httpHost), dest)
+func (p *Proxy) RemoveHTTPHostRouteById(ipPort string, routeId uuid.UUID) {
+	p.RemoveHTTPHostMatchRouteById(ipPort, routeId)
 }
 
 // AddHTTPHostMatchRoute appends a route to the ipPort listener that
@@ -45,16 +47,16 @@ func (p *Proxy) RemoveHTTPHostRoute(ipPort, httpHost string, dest Target) {
 // for any additional routes on ipPort.
 //
 // The ipPort is any valid net.Listen TCP address.
-func (p *Proxy) AddHTTPHostMatchRoute(ipPort string, match Matcher, dest Target) {
-	p.addRoute(ipPort, httpHostMatch{match, dest})
+func (p *Proxy) AddHTTPHostMatchRoute(ipPort string, match Matcher, dest Target) uuid.UUID {
+	return p.addRoute(ipPort, httpHostMatch{match, dest})
 }
 
 // RemoveHTTPHostMatchRoute removes a route to the ipPort listener
 //
 // The ipPort is any net.Listen TCP address. If it hasn't been registered with
 // tcpproxy this is a noop
-func (p *Proxy) RemoveHTTPHostMatchRoute(ipPort string, match Matcher, dest Target) {
-	p.removeRoute(ipPort, httpHostMatch{match, dest})
+func (p *Proxy) RemoveHTTPHostMatchRouteById(ipPort string, routeId uuid.UUID) {
+	p.removeRouteById(ipPort, routeId)
 }
 
 type httpHostMatch struct {
