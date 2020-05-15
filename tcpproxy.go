@@ -330,7 +330,6 @@ func (p *Proxy) serveConn(c net.Conn, cfg *config) bool {
 					Conn:     c,
 				}
 			}
-			log.Printf("tcpproxy: routing to #{hostName}")
 			target.HandleConn(c)
 			return true
 		}
@@ -339,6 +338,13 @@ func (p *Proxy) serveConn(c net.Conn, cfg *config) bool {
 	// TODO: hook for this?
 	if cfg.defaultTarget != nil {
 		log.Printf("tcpproxy: no matching routes found. using default target %s", cfg.defaultTarget)
+		if n := br.Buffered(); n > 0 {
+			peeked, _ := br.Peek(br.Buffered())
+			c = &Conn{
+				Peeked: peeked,
+				Conn:   c,
+			}
+		}
 		cfg.defaultTarget.HandleConn(c)
 		return true
 	} else {
