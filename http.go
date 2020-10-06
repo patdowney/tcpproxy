@@ -33,6 +33,10 @@ func (p *Proxy) AddHTTPHostRoute(ipPort, httpHost string, dest Target) uuid.UUID
 	return p.AddHTTPHostMatchRoute(ipPort, equals(httpHost), dest)
 }
 
+func (p *Proxy) AddHTTPDynamicRoute(ipPort string, targetLookup TargetLookup) uuid.UUID {
+	return p.addRoute(ipPort, dynamicSNIMatch{dynMatcher: targetLookup})
+}
+
 // AddHTTPHostMatchRoute appends a route to the ipPort listener that
 // routes to dest if the incoming HTTP/1.x Host header name is
 // accepted by matcher. If it doesn't match, rule processing continues
@@ -41,6 +45,22 @@ func (p *Proxy) AddHTTPHostRoute(ipPort, httpHost string, dest Target) uuid.UUID
 // The ipPort is any valid net.Listen TCP address.
 func (p *Proxy) AddHTTPHostMatchRoute(ipPort string, match Matcher, dest Target) uuid.UUID {
 	return p.addRoute(ipPort, httpHostMatch{match, dest})
+}
+
+type dynamicHTTPMatch struct {
+	dynMatcher TargetLookup
+}
+
+func (m dynamicHTTPMatch) match(br *bufio.Reader) (Target, string) {
+	sni := clientHelloServerName(br)
+
+	targetAddr, err := m.dynMatcher(context.TODO(), sni)
+
+	if err != nil {
+		return nil, ""
+	}
+
+	return To(targetAddr), sni
 }
 
 type httpHostMatch struct {

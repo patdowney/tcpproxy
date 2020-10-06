@@ -40,6 +40,11 @@ func (p *Proxy) AddSNIRoute(ipPort, sni string, dest Target) uuid.UUID {
 	return p.AddSNIMatchRoute(ipPort, equals(sni), dest)
 }
 
+// No ACME, ACME challenge/response expected to be done at other end
+func (p *Proxy) AddSNIDynamicRoute(ipPort string, targetLookup TargetLookup) uuid.UUID {
+	return p.addRoute(ipPort, dynamicSNIMatch{dynMatcher: targetLookup})
+}
+
 // AddSNIMatchRoute appends a route to the ipPort listener that routes
 // to dest if the incoming TLS SNI server name is accepted by
 // matcher. If it doesn't match, rule processing continues for any
@@ -51,8 +56,8 @@ func (p *Proxy) AddSNIRoute(ipPort, sni string, dest Target) uuid.UUID {
 //
 // The ipPort is any valid net.Listen TCP address.
 func (p *Proxy) AddSNIMatchRoute(ipPort string, matcher Matcher, dest Target) uuid.UUID {
-
 	routeId := uuid.New()
+
 	cfg := p.configFor(ipPort)
 	if !cfg.stopACME {
 		if len(cfg.acmeTargets) == 0 {
@@ -72,6 +77,26 @@ func (p *Proxy) AddSNIMatchRoute(ipPort string, matcher Matcher, dest Target) uu
 // backends.
 func (p *Proxy) AddStopACMESearch(ipPort string) {
 	p.configFor(ipPort).stopACME = true
+}
+
+type dynamicSNIMatch struct {
+	dynMatcher TargetLookup
+}
+
+func (m dynamicSNIMatch) match(br *bufio.Reader) (Target, string) {
+	sni := clientHelloServerName(br)
+
+	if m.dynMatcher == nil {
+		return nil, ""
+
+	}
+
+	targetAddr, err := m.dynMatcher(context.TODO(), sni)
+	if err != nil {
+		return nil, ""
+	}
+
+	return To(targetAddr), sni
 }
 
 type sniMatch struct {
@@ -164,27 +189,38 @@ func tryACME(ctx context.Context, ch chan<- Target, dest Target, sni string) {
 // without consuming any bytes from br.
 // On any error, the empty string is returned.
 func clientHelloServerName(br *bufio.Reader) (sni string) {
-	const recordHeaderLen = 5
-	hdr, err := br.Peek(recordHeaderLen)
+	hello, err := ReadClientHelloInfo(br)
 	if err != nil {
 		return ""
 	}
+	return hello.ServerName
+}
+
+func ReadClientHelloInfo(br *bufio.Reader) (*tls.ClientHelloInfo, error) {
+
+	const recordHeaderLen = 5
+	hdr, err := br.Peek(recordHeaderLen)
+	if err != nil {
+		return nil, err
+	}
 	const recordTypeHandshake = 0x16
 	if hdr[0] != recordTypeHandshake {
-		return "" // Not TLS.
+		return nil, nil // Not TLS.
 	}
 	recLen := int(hdr[3])<<8 | int(hdr[4]) // ignoring version in hdr[1:3]
 	helloBytes, err := br.Peek(recordHeaderLen + recLen)
 	if err != nil {
-		return ""
+		return nil, err
 	}
+
+	helloInfo := &tls.ClientHelloInfo{}
 	tls.Server(sniSniffConn{r: bytes.NewReader(helloBytes)}, &tls.Config{
 		GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
-			sni = hello.ServerName
+			helloInfo = hello
 			return nil, nil
 		},
 	}).Handshake()
-	return
+	return helloInfo, nil
 }
 
 // sniSniffConn is a net.Conn that reads from r, fails on Writes,
