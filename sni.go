@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"fmt"
 	"io"
 	"net"
 	"strings"
@@ -193,6 +194,7 @@ func clientHelloServerName(br *bufio.Reader) (sni string) {
 	if err != nil {
 		return ""
 	}
+
 	return hello.ServerName
 }
 
@@ -205,7 +207,7 @@ func ReadClientHelloInfo(br *bufio.Reader) (*tls.ClientHelloInfo, error) {
 	}
 	const recordTypeHandshake = 0x16
 	if hdr[0] != recordTypeHandshake {
-		return nil, nil // Not TLS.
+		return nil, fmt.Errorf("not tls")
 	}
 	recLen := int(hdr[3])<<8 | int(hdr[4]) // ignoring version in hdr[1:3]
 	helloBytes, err := br.Peek(recordHeaderLen + recLen)
