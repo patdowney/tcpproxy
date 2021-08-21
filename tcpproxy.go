@@ -56,7 +56,6 @@ import (
 	"bufio"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net"
@@ -65,6 +64,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pires/go-proxyproto"
 )
 
 // Proxy is a proxy. Its zero value is a valid proxy that does
@@ -326,7 +326,8 @@ func (p *Proxy) serveListener(ret chan<- error, ln net.Listener, cfg *config) {
 func (p *Proxy) serveConn(c net.Conn, cfg *config) bool {
 	br := bufio.NewReader(c)
 	for _, routeWithId := range cfg.Routes() {
-		if target, hostName := routeWithId.Route.match(br); target != nil {
+		target, hostName := routeWithId.Route.match(br)
+		if target != nil {
 			if n := br.Buffered(); n > 0 {
 				peeked, _ := br.Peek(br.Buffered())
 				c = &Conn{
@@ -338,8 +339,8 @@ func (p *Proxy) serveConn(c net.Conn, cfg *config) bool {
 			target.HandleConn(c)
 			return true
 		}
-
 	}
+
 	// TODO: hook for this?
 	if cfg.defaultTarget != nil {
 		log.Printf("tcpproxy: no matching routes found. using default target %s", cfg.defaultTarget)
@@ -503,32 +504,34 @@ func (dp *DialProxy) HandleConn(src net.Conn) {
 }
 
 func (dp *DialProxy) sendProxyHeader(w io.Writer, src net.Conn) error {
-	switch dp.ProxyProtocolVersion {
-	case 0:
+	if dp.ProxyProtocolVersion == 0 {
 		return nil
-	case 1:
-		var srcAddr, dstAddr *net.TCPAddr
-		if a, ok := src.RemoteAddr().(*net.TCPAddr); ok {
-			srcAddr = a
-		}
-		if a, ok := src.LocalAddr().(*net.TCPAddr); ok {
-			dstAddr = a
-		}
-
-		if srcAddr == nil || dstAddr == nil {
-			_, err := io.WriteString(w, "PROXY UNKNOWN\r\n")
-			return err
-		}
-
-		family := "TCP4"
-		if srcAddr.IP.To4() == nil {
-			family = "TCP6"
-		}
-		_, err := fmt.Fprintf(w, "PROXY %s %s %d %s %d\r\n", family, srcAddr.IP, srcAddr.Port, dstAddr.IP, dstAddr.Port)
-		return err
-	default:
-		return fmt.Errorf("PROXY protocol version %d not supported", dp.ProxyProtocolVersion)
 	}
+
+	var srcAddr, dstAddr *net.TCPAddr
+	if a, ok := src.RemoteAddr().(*net.TCPAddr); ok {
+		srcAddr = a
+	}
+	if a, ok := src.LocalAddr().(*net.TCPAddr); ok {
+		dstAddr = a
+	}
+
+	transportProtocol := proxyproto.TCPv4
+	if srcAddr.IP.To4() == nil {
+		transportProtocol = proxyproto.TCPv6
+	}
+
+	header := &proxyproto.Header{
+		Version:           byte(dp.ProxyProtocolVersion),
+		Command:           proxyproto.PROXY,
+		TransportProtocol: transportProtocol,
+		SourceAddr:        srcAddr,
+		DestinationAddr:   dstAddr,
+	}
+	// After the connection was created write the proxy headers first
+	_, err := header.WriteTo(w)
+
+	return err
 }
 
 // proxyCopy is the function that copies bytes around.

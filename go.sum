@@ -2,3 +2,5 @@ github.com/armon/go-proxyproto v0.0.0-20200108142055-f0b8253b1507 h1:dmVRVC/Mmuw
 github.com/armon/go-proxyproto v0.0.0-20200108142055-f0b8253b1507/go.mod h1:QmP9hvJ91BbJmGVGSbutW19IC0Q9phDCLGaomwTJbgU=
 github.com/google/uuid v1.3.0 h1:t6JiXgmwXMjEs8VusXIJk2BXHsn+wx8BZdTaoZ5fu7I=
 github.com/google/uuid v1.3.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
+github.com/pires/go-proxyproto v0.6.0 h1:cLJUPnuQdiNf7P/wbeOKmM1khVdaMgTFDLj8h9ZrVYk=
+github.com/pires/go-proxyproto v0.6.0/go.mod h1:Odh9VFOZJCf9G8cLW5o435Xf1J95Jw9Gw5rnCjcwzAY=
