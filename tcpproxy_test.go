@@ -432,6 +432,7 @@ func cert(t *testing.T, domain string) tls.Certificate {
 		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
+		DNSNames:              []string{domain},
 	}
 
 	derBytes, err := x509.CreateCertificate(rand.Reader, template, template, &private.PublicKey, private)
@@ -467,7 +468,6 @@ func newTLSServer(t *testing.T, domain string) net.Listener {
 			cfg := &tls.Config{
 				Certificates: []tls.Certificate{cert, acmeCert},
 			}
-			cfg.BuildNameToCertificate()
 			conn := tls.Server(rawConn, cfg)
 			if _, err = io.WriteString(conn, domain); err != nil {
 				t.Errorf("writing to tlsconn: %s", err)
