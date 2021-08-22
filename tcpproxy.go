@@ -520,25 +520,31 @@ func (dp *DialProxy) sendProxyHeader(w io.Writer, src net.Conn) error {
 		return nil
 	}
 
-	var srcAddr, dstAddr *net.TCPAddr
-	if a, ok := src.RemoteAddr().(*net.TCPAddr); ok {
-		srcAddr = a
-	}
-	if a, ok := src.LocalAddr().(*net.TCPAddr); ok {
-		dstAddr = a
-	}
+	var header *proxyproto.Header
+	if proxyConn, ok := src.(*proxyproto.Conn); ok {
+		header = proxyConn.ProxyHeader()
+	} else {
 
-	transportProtocol := proxyproto.TCPv4
-	if srcAddr.IP.To4() == nil {
-		transportProtocol = proxyproto.TCPv6
-	}
+		var srcAddr, dstAddr *net.TCPAddr
+		if a, ok := src.RemoteAddr().(*net.TCPAddr); ok {
+			srcAddr = a
+		}
+		if a, ok := src.LocalAddr().(*net.TCPAddr); ok {
+			dstAddr = a
+		}
 
-	header := &proxyproto.Header{
-		Version:           byte(dp.ProxyProtocolVersion),
-		Command:           proxyproto.PROXY,
-		TransportProtocol: transportProtocol,
-		SourceAddr:        srcAddr,
-		DestinationAddr:   dstAddr,
+		transportProtocol := proxyproto.TCPv4
+		if srcAddr.IP.To4() == nil {
+			transportProtocol = proxyproto.TCPv6
+		}
+
+		header = &proxyproto.Header{
+			Version:           byte(dp.ProxyProtocolVersion),
+			Command:           proxyproto.PROXY,
+			TransportProtocol: transportProtocol,
+			SourceAddr:        srcAddr,
+			DestinationAddr:   dstAddr,
+		}
 	}
 	// After the connection was created write the proxy headers first
 	_, err := header.WriteTo(w)
