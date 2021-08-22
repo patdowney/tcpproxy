@@ -123,6 +123,8 @@ type config struct {
 
 	stopACME bool // if true, AddSNIRoute doesn't add targets to acmeTargets.
 
+	enableProxyProtocol bool
+
 	defaultTarget Target
 }
 
@@ -245,6 +247,11 @@ func (p *Proxy) SetDefaultTarget(ipPort string, dest Target) {
 	cfg.defaultTarget = dest
 }
 
+func (p *Proxy) EnableProxyProtocol(ipPort string, enableProxyProtocol bool) {
+	cfg := p.configFor(ipPort)
+	cfg.enableProxyProtocol = enableProxyProtocol
+}
+
 type fixedTarget struct {
 	t Target
 }
@@ -298,6 +305,11 @@ func (p *Proxy) Start() error {
 			p.Close()
 			return err
 		}
+
+		if config.enableProxyProtocol {
+			ln = &proxyproto.Listener{Listener: ln}
+		}
+
 		p.lns = append(p.lns, ln)
 		go p.serveListener(errc, ln, config)
 	}
