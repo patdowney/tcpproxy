@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	proxyproto "github.com/armon/go-proxyproto"
+	proxyproto "github.com/pires/go-proxyproto"
 )
 
 func TestRouting(t *testing.T) {
