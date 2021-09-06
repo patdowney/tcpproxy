@@ -42,7 +42,7 @@ func (p *Proxy) AddSNIRoute(ipPort, sni string, dest Target) uuid.UUID {
 }
 
 // No ACME, ACME challenge/response expected to be done at other end
-func (p *Proxy) AddSNIDynamicRoute(ipPort string, targetLookup TargetLookup) uuid.UUID {
+func (p *Proxy) AddSNIDynamicRoute(ipPort string, targetLookup DynamicTarget) uuid.UUID {
 	return p.addRoute(ipPort, dynamicSNIMatch{dynMatcher: targetLookup})
 }
 
@@ -81,7 +81,7 @@ func (p *Proxy) AddStopACMESearch(ipPort string) {
 }
 
 type dynamicSNIMatch struct {
-	dynMatcher TargetLookup
+	dynMatcher DynamicTarget
 }
 
 func (m dynamicSNIMatch) match(br *bufio.Reader) (Target, string) {
@@ -92,12 +92,12 @@ func (m dynamicSNIMatch) match(br *bufio.Reader) (Target, string) {
 
 	}
 
-	targetAddr, err := m.dynMatcher(context.TODO(), sni)
+	target, err := m.dynMatcher(context.TODO(), sni)
 	if err != nil {
 		return nil, ""
 	}
 
-	return To(targetAddr), sni
+	return target, sni
 }
 
 type sniMatch struct {

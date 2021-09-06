@@ -102,6 +102,8 @@ type Matcher func(ctx context.Context, hostname string) bool
 // - otherwise returns an ip:port string and nil if a match is found
 type TargetLookup func(ctx context.Context, hostname string) (string, error)
 
+type DynamicTarget func(ctx context.Context, hostname string) (Target, error)
+
 // equals is a trivial Matcher that implements string equality.
 func equals(want string) Matcher {
 	return func(_ context.Context, got string) bool {
