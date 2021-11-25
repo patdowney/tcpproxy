@@ -58,6 +58,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"math/rand"
 	"net"
 	"regexp"
 	"sync"
@@ -335,24 +336,50 @@ func (p *Proxy) serveListener(ret chan<- error, ln net.Listener, cfg *config) {
 	}
 }
 
+func findRoute(routes []routeWithId, br *bufio.Reader) (Target, string) {
+	var matchedHostname string
+	matchedRoutes := make([]Target, 0)
+
+	for _, routeWithId := range routes {
+		target, hostName := routeWithId.Route.match(br)
+		if target != nil {
+			matchedHostname = hostName
+			matchedRoutes = append(matchedRoutes, target)
+		}
+	}
+
+	if len(matchedRoutes) == 0 {
+		return nil, ""
+	}
+
+	if len(matchedRoutes) == 1 {
+		return matchedRoutes[0], matchedHostname
+	}
+
+	randomIndex := rand.Intn(len(matchedRoutes))
+	randomRoute := matchedRoutes[randomIndex]
+
+	return randomRoute, matchedHostname
+}
+
 // serveConn runs in its own goroutine and matches c against routes.
 // It returns whether it matched purely for testing.
 func (p *Proxy) serveConn(c net.Conn, cfg *config) bool {
 	br := bufio.NewReader(c)
-	for _, routeWithId := range cfg.Routes() {
-		target, hostName := routeWithId.Route.match(br)
-		if target != nil {
-			if n := br.Buffered(); n > 0 {
-				peeked, _ := br.Peek(br.Buffered())
-				c = &Conn{
-					HostName: hostName,
-					Peeked:   peeked,
-					Conn:     c,
-				}
+
+	target, hostName := findRoute(cfg.Routes(), br)
+
+	if target != nil {
+		if n := br.Buffered(); n > 0 {
+			peeked, _ := br.Peek(br.Buffered())
+			c = &Conn{
+				HostName: hostName,
+				Peeked:   peeked,
+				Conn:     c,
 			}
-			target.HandleConn(c)
-			return true
 		}
+		target.HandleConn(c)
+		return true
 	}
 
 	// TODO: hook for this?
