@@ -15,7 +15,6 @@
 package tcpproxy
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/tls"
@@ -84,7 +83,7 @@ type dynamicSNIMatch struct {
 	dynMatcher DynamicTarget
 }
 
-func (m dynamicSNIMatch) match(br *bufio.Reader) (Target, string) {
+func (m dynamicSNIMatch) match(br peeker) (Target, string) {
 	sni := clientHelloServerName(br)
 
 	if m.dynMatcher == nil {
@@ -105,7 +104,7 @@ type sniMatch struct {
 	target  Target
 }
 
-func (m sniMatch) match(br *bufio.Reader) (Target, string) {
+func (m sniMatch) match(br peeker) (Target, string) {
 	sni := clientHelloServerName(br)
 	if m.matcher(context.TODO(), sni) {
 		return m.target, sni
@@ -120,7 +119,7 @@ type acmeMatch struct {
 	cfg *config
 }
 
-func (m *acmeMatch) match(br *bufio.Reader) (Target, string) {
+func (m *acmeMatch) match(br peeker) (Target, string) {
 	sni := clientHelloServerName(br)
 	if !strings.HasSuffix(sni, ".acme.invalid") {
 		return nil, ""
@@ -189,7 +188,7 @@ func tryACME(ctx context.Context, ch chan<- Target, dest Target, sni string) {
 // clientHelloServerName returns the SNI server name inside the TLS ClientHello,
 // without consuming any bytes from br.
 // On any error, the empty string is returned.
-func clientHelloServerName(br *bufio.Reader) (sni string) {
+func clientHelloServerName(br peeker) (sni string) {
 	hello, err := ReadClientHelloInfo(br)
 	if err != nil {
 		return ""
@@ -198,7 +197,7 @@ func clientHelloServerName(br *bufio.Reader) (sni string) {
 	return hello.ServerName
 }
 
-func ReadClientHelloInfo(br *bufio.Reader) (*tls.ClientHelloInfo, error) {
+func ReadClientHelloInfo(br peeker) (*tls.ClientHelloInfo, error) {
 
 	const recordHeaderLen = 5
 	hdr, err := br.Peek(recordHeaderLen)

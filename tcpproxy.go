@@ -171,6 +171,11 @@ type routeWithId struct {
 	Route route
 }
 
+type peeker interface {
+	Peek(n int) ([]byte, error)
+	Buffered() int
+}
+
 // A route matches a connection to a target.
 type route interface {
 	// match examines the initial bytes of a connection, looking for a
@@ -183,7 +188,7 @@ type route interface {
 	//
 	// If an sni or host header was parsed successfully, that will be
 	// returned as the second parameter.
-	match(*bufio.Reader) (Target, string)
+	match(peeker) (Target, string)
 }
 
 func (p *Proxy) netListen() func(net, laddr string) (net.Listener, error) {
@@ -259,7 +264,7 @@ type fixedTarget struct {
 	t Target
 }
 
-func (m fixedTarget) match(*bufio.Reader) (Target, string) { return m.t, "" }
+func (m fixedTarget) match(peeker) (Target, string) { return m.t, "" }
 
 // Run is calls Start, and then Wait.
 //
@@ -336,7 +341,7 @@ func (p *Proxy) serveListener(ret chan<- error, ln net.Listener, cfg *config) {
 	}
 }
 
-func findRoute(routes []routeWithId, br *bufio.Reader) (Target, string) {
+func findRoute(routes []routeWithId, br peeker) (Target, string) {
 	var matchedHostname string
 	matchedRoutes := make([]Target, 0)
 
