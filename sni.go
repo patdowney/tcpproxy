@@ -35,14 +35,6 @@ func (p *Proxy) AddSNIRoute(ipPort, sni string, dest Target) uuid.UUID {
 	return p.AddSNIMatchRoute(ipPort, equals(sni), dest)
 }
 
-// DynamicTarget Deprecated
-type DynamicTarget func(ctx context.Context, hostname string) (Target, error)
-
-// AddSNIDynamicRoute
-func (p *Proxy) AddSNIDynamicRoute(ipPort string, targetLookup DynamicTarget) uuid.UUID {
-	return p.addRoute(ipPort, dynamicSNIMatch{dynMatcher: targetLookup})
-}
-
 // AddSNIMatchRoute appends a route to the ipPort listener that routes
 // to dest if the incoming TLS SNI server name is accepted by
 // matcher. If it doesn't match, rule processing continues for any
@@ -58,11 +50,11 @@ func (p *Proxy) AddSNIMatchRoute(ipPort string, matcher Matcher, dest Target) uu
 }
 
 // AddSNIDynamicSMTPRoute
-func (p *Proxy) AddSNIDynamicSMTPRoute(ipPort string, serverName string, targetLookup DynamicTarget) uuid.UUID {
+func (p *Proxy) AddSNIDynamicSMTPRoute(ipPort string, serverName string, targetLookup SNITargetFunc) uuid.UUID {
 	cfg := p.configFor(ipPort)
 	cfg.negotiateFunc = negotiateSMTPStartTLS(serverName)
 
-	return p.addRoute(ipPort, dynamicSNIMatch{dynMatcher: targetLookup})
+	return p.addRoute(ipPort, sniMatch{targetFunc: targetLookup})
 }
 
 // SNITargetFunc is the func callback used by Proxy.AddSNIRouteFunc.
@@ -72,26 +64,6 @@ type SNITargetFunc func(ctx context.Context, sniName string) (t Target, ok bool)
 // fn to map its nap to a target.
 func (p *Proxy) AddSNIRouteFunc(ipPort string, fn SNITargetFunc) uuid.UUID {
 	return p.addRoute(ipPort, sniMatch{targetFunc: fn})
-}
-
-type dynamicSNIMatch struct {
-	dynMatcher DynamicTarget
-}
-
-func (m dynamicSNIMatch) match(br *bufio.Reader) (Target, string) {
-	sni := clientHelloServerName(br)
-
-	if m.dynMatcher == nil {
-		return nil, ""
-
-	}
-
-	target, err := m.dynMatcher(context.TODO(), sni)
-	if err != nil {
-		return nil, ""
-	}
-
-	return target, sni
 }
 
 type sniMatch struct {
