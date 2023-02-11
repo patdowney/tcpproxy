@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/textproto"
 	"strings"
 
 	"github.com/google/uuid"
@@ -40,7 +41,7 @@ func (p *Proxy) AddSNIRoute(ipPort, sni string, dest Target) uuid.UUID {
 	return p.AddSNIMatchRoute(ipPort, equals(sni), dest)
 }
 
-// No ACME, ACME challenge/response expected to be done at other end
+// AddSNIDynamicRoute No ACME, ACME challenge/response expected to be done at other end
 func (p *Proxy) AddSNIDynamicRoute(ipPort string, targetLookup DynamicTarget) uuid.UUID {
 	return p.addRoute(ipPort, dynamicSNIMatch{dynMatcher: targetLookup})
 }
@@ -71,6 +72,14 @@ func (p *Proxy) AddSNIMatchRoute(ipPort string, matcher Matcher, dest Target) uu
 	return routeId
 }
 
+// AddSNIDynamicSMTPRoute
+func (p *Proxy) AddSNIDynamicSMTPRoute(ipPort string, serverName string, targetLookup DynamicTarget) uuid.UUID {
+	cfg := p.configFor(ipPort)
+	cfg.negotiateFunc = negotiateSMTPStartTLS(serverName)
+
+	return p.addRoute(ipPort, dynamicSNIMatch{dynMatcher: targetLookup})
+}
+
 // AddStopACMESearch prevents ACME probing of subsequent SNI routes.
 // Any ACME challenges on ipPort for SNI routes previously added
 // before this call will still be proxied to all possible SNI
@@ -97,6 +106,19 @@ func (m dynamicSNIMatch) match(br peeker) (Target, string) {
 	}
 
 	return target, sni
+}
+
+type smtpMatch struct {
+	matcher Matcher
+	target  Target
+}
+
+func (m smtpMatch) match(c net.Conn) (Target, string) {
+	target := clientEhloServerName(c)
+	if m.matcher(context.TODO(), target) {
+		return m.target, target
+	}
+	return nil, ""
 }
 
 type sniMatch struct {
@@ -195,6 +217,32 @@ func clientHelloServerName(br peeker) (sni string) {
 	}
 
 	return hello.ServerName
+}
+
+func clientEhloServerName(c net.Conn) (sni string) {
+	ehlo, err := ReadEhloAndStartTLS(c)
+	if err != nil {
+		return ""
+	}
+	return ehlo
+}
+
+func ReadEhloAndStartTLS(c net.Conn) (string, error) {
+	//r := bufio.NewReader(c)
+	//w := bufio.NewWriter(c)
+	//rw := bufio.NewReadWriter(r, w)
+
+	t := textproto.NewConn(c)
+
+	l, err := t.ReadLine()
+	if err != nil {
+		return "", nil
+	}
+	//t.ReadCodeLine()
+	//rw.WriteString("asdf\r")
+
+	//r.ReadString('\r')
+	return l, nil
 }
 
 func ReadClientHelloInfo(br peeker) (*tls.ClientHelloInfo, error) {

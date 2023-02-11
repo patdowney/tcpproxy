@@ -18,14 +18,14 @@
 //
 // Typical usage:
 //
-//     var p tcpproxy.Proxy
-//     p.AddHTTPHostRoute(":80", "foo.com", tcpproxy.To("10.0.0.1:8081"))
-//     p.AddHTTPHostRoute(":80", "bar.com", tcpproxy.To("10.0.0.2:8082"))
-//     p.AddRoute(":80", tcpproxy.To("10.0.0.1:8081")) // fallback
-//     p.AddSNIRoute(":443", "foo.com", tcpproxy.To("10.0.0.1:4431"))
-//     p.AddSNIRoute(":443", "bar.com", tcpproxy.To("10.0.0.2:4432"))
-//     p.AddRoute(":443", tcpproxy.To("10.0.0.1:4431")) // fallback
-//     log.Fatal(p.Run())
+//	var p tcpproxy.Proxy
+//	p.AddHTTPHostRoute(":80", "foo.com", tcpproxy.To("10.0.0.1:8081"))
+//	p.AddHTTPHostRoute(":80", "bar.com", tcpproxy.To("10.0.0.2:8082"))
+//	p.AddRoute(":80", tcpproxy.To("10.0.0.1:8081")) // fallback
+//	p.AddSNIRoute(":443", "foo.com", tcpproxy.To("10.0.0.1:4431"))
+//	p.AddSNIRoute(":443", "bar.com", tcpproxy.To("10.0.0.2:4432"))
+//	p.AddRoute(":443", tcpproxy.To("10.0.0.1:4431")) // fallback
+//	log.Fatal(p.Run())
 //
 // Calling Run (or Start) on a proxy also starts all the necessary
 // listeners.
@@ -98,12 +98,14 @@ type Proxy struct {
 // Matcher reports whether hostname matches the Matcher's criteria.
 type Matcher func(ctx context.Context, hostname string) bool
 
-// TargetLookupFunc can be used to dynamically lookup a target address
+// TargetLookup can be used to dynamically lookup a target address
 // - returns an empty string and a not nil error if match not found
 // - otherwise returns an ip:port string and nil if a match is found
-type TargetLookup func(ctx context.Context, hostname string) (string, error)
+//type TargetLookup func(ctx context.Context, hostname string) (string, error)
 
 type DynamicTarget func(ctx context.Context, hostname string) (Target, error)
+
+type NegotiateFunc func(gc net.Conn, cfg *config) bool
 
 // equals is a trivial Matcher that implements string equality.
 func equals(want string) Matcher {
@@ -127,8 +129,10 @@ type config struct {
 	stopACME bool // if true, AddSNIRoute doesn't add targets to acmeTargets.
 
 	enableProxyProtocol bool
+	negotiateFunc       NegotiateFunc
 
-	defaultTarget Target
+	defaultTarget  Target
+	smtpServerName string
 }
 
 func (c *config) AddRoute(r route) uuid.UUID {
@@ -243,7 +247,7 @@ func (p *Proxy) AddRoute(ipPort string, dest Target) uuid.UUID {
 	return p.addRoute(ipPort, fixedTarget{dest})
 }
 
-// RemoveRoute removes the specified target from the ipPort listener
+// RemoveRouteById removes the specified route from the ipPort listener
 //
 // This method won't remove an ipPort listener if there are no routes remaining
 func (p *Proxy) RemoveRouteById(ipPort string, routeId uuid.UUID) {
@@ -337,6 +341,7 @@ func (p *Proxy) serveListener(ret chan<- error, ln net.Listener, cfg *config) {
 			ret <- err
 			return
 		}
+
 		go p.serveConn(c, cfg)
 	}
 }
@@ -370,6 +375,12 @@ func findRoute(routes []routeWithId, br peeker) (Target, string) {
 // serveConn runs in its own goroutine and matches c against routes.
 // It returns whether it matched purely for testing.
 func (p *Proxy) serveConn(c net.Conn, cfg *config) bool {
+	if cfg.negotiateFunc != nil {
+		if !cfg.negotiateFunc(c, cfg) {
+			return false
+		}
+	}
+
 	br := bufio.NewReader(c)
 
 	target, hostName := findRoute(cfg.Routes(), br)
@@ -389,7 +400,7 @@ func (p *Proxy) serveConn(c net.Conn, cfg *config) bool {
 
 	// TODO: hook for this?
 	if cfg.defaultTarget != nil {
-		log.Printf("tcpproxy: no matching routes found. using default target %s", cfg.defaultTarget)
+		log.Printf("tcpproxy: no matching routes found for %s. using default target %s", hostName, cfg.defaultTarget)
 		if n := br.Buffered(); n > 0 {
 			peeked, _ := br.Peek(br.Buffered())
 			c = &Conn{
@@ -455,7 +466,7 @@ type Target interface {
 	HandleConn(net.Conn)
 }
 
-// To is shorthand way of writing &tcpproxy.DialProxy{Addr: addr}.
+// To is a shorthand way of writing &tcpproxy.DialProxy{Addr: addr}.
 func To(addr string) *DialProxy {
 	return &DialProxy{Addr: addr}
 }
