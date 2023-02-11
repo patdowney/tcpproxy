@@ -60,7 +60,6 @@ import (
 	"log"
 	"math/rand"
 	"net"
-	"regexp"
 	"sync"
 	"time"
 
@@ -87,14 +86,6 @@ type Proxy struct {
 	ListenFunc func(net, laddr string) (net.Listener, error)
 }
 
-//
-//func (p *Proxy) Configs() map[string]*config {
-//	p.mu.Lock()
-//	defer p.mu.Unlock()
-//
-//	return p.configs
-//}
-
 // Matcher reports whether hostname matches the Matcher's criteria.
 type Matcher func(ctx context.Context, hostname string) bool
 
@@ -112,25 +103,15 @@ func equals(want string) Matcher {
 	}
 }
 
-func re(r regexp.Regexp) Matcher {
-	return func(_ context.Context, got string) bool {
-		return r.MatchString(got)
-	}
-}
-
 // config contains the proxying state for one listener.
 type config struct {
-	mu          sync.Mutex
-	routes      []routeWithId
-	acmeTargets []Target // accumulates targets that should be probed for acme.
-
-	stopACME bool // if true, AddSNIRoute doesn't add targets to acmeTargets.
+	mu     sync.Mutex
+	routes []routeWithId
 
 	enableProxyProtocol bool
 	negotiateFunc       NegotiateFunc
 
-	defaultTarget  Target
-	smtpServerName string
+	defaultTarget Target
 }
 
 func (c *config) AddRoute(r route) uuid.UUID {
@@ -173,11 +154,6 @@ type routeWithId struct {
 	Route route
 }
 
-type peeker interface {
-	Peek(n int) ([]byte, error)
-	Buffered() int
-}
-
 // A route matches a connection to a target.
 type route interface {
 	// match examines the initial bytes of a connection, looking for a
@@ -190,7 +166,7 @@ type route interface {
 	//
 	// If an sni or host header was parsed successfully, that will be
 	// returned as the second parameter.
-	match(peeker) (Target, string)
+	match(*bufio.Reader) (Target, string)
 }
 
 func (p *Proxy) netListen() func(net, laddr string) (net.Listener, error) {
@@ -266,7 +242,7 @@ type fixedTarget struct {
 	t Target
 }
 
-func (m fixedTarget) match(peeker) (Target, string) { return m.t, "" }
+func (m fixedTarget) match(*bufio.Reader) (Target, string) { return m.t, "" }
 
 // Run is calls Start, and then Wait.
 //
@@ -344,7 +320,7 @@ func (p *Proxy) serveListener(ret chan<- error, ln net.Listener, cfg *config) {
 	}
 }
 
-func findRoute(routes []routeWithId, br peeker) (Target, string) {
+func findRoute(routes []routeWithId, br *bufio.Reader) (Target, string) {
 	var matchedHostname string
 	matchedRoutes := make([]Target, 0)
 
@@ -383,15 +359,16 @@ func (p *Proxy) serveConn(c net.Conn, cfg *config) bool {
 
 	target, hostName := findRoute(cfg.Routes(), br)
 
-	if target != nil {
-		if n := br.Buffered(); n > 0 {
-			peeked, _ := br.Peek(br.Buffered())
-			c = &Conn{
-				HostName: hostName,
-				Peeked:   peeked,
-				Conn:     c,
-			}
+	if n := br.Buffered(); n > 0 {
+		peeked, _ := br.Peek(br.Buffered())
+		c = &Conn{
+			HostName: hostName,
+			Peeked:   peeked,
+			Conn:     c,
 		}
+	}
+
+	if target != nil {
 		target.HandleConn(c)
 		return true
 	}
@@ -399,18 +376,11 @@ func (p *Proxy) serveConn(c net.Conn, cfg *config) bool {
 	// TODO: hook for this?
 	if cfg.defaultTarget != nil {
 		log.Printf("tcpproxy: no matching routes found for %s. using default target %s", hostName, cfg.defaultTarget)
-		if n := br.Buffered(); n > 0 {
-			peeked, _ := br.Peek(br.Buffered())
-			c = &Conn{
-				Peeked: peeked,
-				Conn:   c,
-			}
-		}
 		cfg.defaultTarget.HandleConn(c)
 		return true
-	} else {
-		log.Printf("tcpproxy: no routes matched conn %v/%v; closing", c.RemoteAddr().String(), c.LocalAddr().String())
 	}
+	log.Printf("tcpproxy: no routes matched conn %v/%v; closing", c.RemoteAddr().String(), c.LocalAddr().String())
+
 	c.Close()
 	return false
 }

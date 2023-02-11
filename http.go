@@ -51,7 +51,7 @@ type dynamicHTTPMatch struct {
 	dynMatcher DynamicTarget
 }
 
-func (m dynamicHTTPMatch) match(br peeker) (Target, string) {
+func (m dynamicHTTPMatch) match(br *bufio.Reader) (Target, string) {
 	sni := clientHelloServerName(br)
 
 	target, err := m.dynMatcher(context.TODO(), sni)
@@ -68,7 +68,7 @@ type httpHostMatch struct {
 	target  Target
 }
 
-func (m httpHostMatch) match(br peeker) (Target, string) {
+func (m httpHostMatch) match(br *bufio.Reader) (Target, string) {
 	hh := httpHostHeader(br)
 	if m.matcher(context.TODO(), hh) {
 		return m.target, hh
@@ -78,7 +78,7 @@ func (m httpHostMatch) match(br peeker) (Target, string) {
 
 // httpHostHeader returns the HTTP Host header from br without
 // consuming any of its bytes. It returns "" if it can't find one.
-func httpHostHeader(br peeker) string {
+func httpHostHeader(br *bufio.Reader) string {
 	const maxPeek = 4 << 10
 	peekSize := 0
 	for {

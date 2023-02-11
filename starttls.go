@@ -45,7 +45,7 @@ func negotiateSMTPStartTLS(serverName string) NegotiateFunc {
 		t := textproto.NewConn(c)
 		_, err := greetSMTP(t, serverName)
 		if err == nil {
-			err := negotiateSMTPTLS(t, cfg.smtpServerName)
+			err := negotiateSMTPTLS(t, serverName)
 			if err == nil {
 				return true
 			}
