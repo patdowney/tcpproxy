@@ -32,14 +32,13 @@ import (
 // match, rule processing continues for any additional routes on
 // ipPort.
 //
-// By default, the proxy will route all ACME tls-sni-01 challenges
-// received on ipPort to all SNI dests. You can disable ACME routing
-// with AddStopACMESearch.
-//
 // The ipPort is any valid net.Listen TCP address.
 func (p *Proxy) AddSNIRoute(ipPort, sni string, dest Target) uuid.UUID {
 	return p.AddSNIMatchRoute(ipPort, equals(sni), dest)
 }
+
+// DynamicTarget Deprecated
+type DynamicTarget func(ctx context.Context, hostname string) (Target, error)
 
 // AddSNIDynamicRoute No ACME, ACME challenge/response expected to be done at other end
 func (p *Proxy) AddSNIDynamicRoute(ipPort string, targetLookup DynamicTarget) uuid.UUID {
@@ -50,10 +49,6 @@ func (p *Proxy) AddSNIDynamicRoute(ipPort string, targetLookup DynamicTarget) uu
 // to dest if the incoming TLS SNI server name is accepted by
 // matcher. If it doesn't match, rule processing continues for any
 // additional routes on ipPort.
-//
-// By default, the proxy will route all ACME tls-sni-01 challenges
-// received on ipPort to all SNI dests. You can disable ACME routing
-// with AddStopACMESearch.
 //
 // The ipPort is any valid net.Listen TCP address.
 func (p *Proxy) AddSNIMatchRoute(ipPort string, matcher Matcher, dest Target) uuid.UUID {
@@ -67,7 +62,7 @@ func (p *Proxy) AddSNIMatchRoute(ipPort string, matcher Matcher, dest Target) uu
 		cfg.acmeTargets = append(cfg.acmeTargets, dest)
 	}
 
-	p.addRouteWithId(ipPort, sniMatch{matcher, dest}, routeId)
+	p.addRouteWithId(ipPort, sniMatch{matcher, dest, nil}, routeId)
 
 	return routeId
 }
@@ -80,12 +75,13 @@ func (p *Proxy) AddSNIDynamicSMTPRoute(ipPort string, serverName string, targetL
 	return p.addRoute(ipPort, dynamicSNIMatch{dynMatcher: targetLookup})
 }
 
-// AddStopACMESearch prevents ACME probing of subsequent SNI routes.
-// Any ACME challenges on ipPort for SNI routes previously added
-// before this call will still be proxied to all possible SNI
-// backends.
-func (p *Proxy) AddStopACMESearch(ipPort string) {
-	p.configFor(ipPort).stopACME = true
+// SNITargetFunc is the func callback used by Proxy.AddSNIRouteFunc.
+type SNITargetFunc func(ctx context.Context, sniName string) (t Target, ok bool)
+
+// AddSNIRouteFunc adds a route to ipPort that matches an SNI request and calls
+// fn to map its nap to a target.
+func (p *Proxy) AddSNIRouteFunc(ipPort string, fn SNITargetFunc) uuid.UUID {
+	return p.addRoute(ipPort, sniMatch{targetFunc: fn})
 }
 
 type dynamicSNIMatch struct {
@@ -108,26 +104,25 @@ func (m dynamicSNIMatch) match(br peeker) (Target, string) {
 	return target, sni
 }
 
-type smtpMatch struct {
-	matcher Matcher
-	target  Target
-}
-
-func (m smtpMatch) match(c net.Conn) (Target, string) {
-	target := clientEhloServerName(c)
-	if m.matcher(context.TODO(), target) {
-		return m.target, target
-	}
-	return nil, ""
-}
-
 type sniMatch struct {
 	matcher Matcher
 	target  Target
+
+	// Alternatively, if targetFunc is non-nil, it's used instead:
+	targetFunc SNITargetFunc
 }
 
 func (m sniMatch) match(br peeker) (Target, string) {
 	sni := clientHelloServerName(br)
+	if sni == "" {
+		return nil, ""
+	}
+	if m.targetFunc != nil {
+		if t, ok := m.targetFunc(context.TODO(), sni); ok {
+			return t, sni
+		}
+		return nil, ""
+	}
 	if m.matcher(context.TODO(), sni) {
 		return m.target, sni
 	}

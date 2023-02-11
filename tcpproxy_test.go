@@ -17,6 +17,7 @@ package tcpproxy
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -27,10 +28,8 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"math/big"
 	"net"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -341,6 +340,49 @@ func TestProxySNI(t *testing.T) {
 	}
 }
 
+func TestAddSNIRouteFunc(t *testing.T) {
+	front := newLocalListener(t)
+	defer front.Close()
+
+	backFoo := newLocalListener(t)
+	defer backFoo.Close()
+	backBar := newLocalListener(t)
+	defer backBar.Close()
+
+	p := testProxy(t, front)
+	p.AddSNIRouteFunc(testFrontAddr, func(ctx context.Context, sniName string) (_ Target, ok bool) {
+		if sniName == "bar.com" {
+			return To(backBar.Addr().String()), true
+		}
+		t.Fatalf("failed to match %q", sniName)
+		return nil, false
+	})
+	if err := p.Start(); err != nil {
+		t.Fatal(err)
+	}
+
+	toFront, err := net.Dial("tcp", front.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer toFront.Close()
+
+	msg := clientHelloRecord(t, "bar.com")
+	io.WriteString(toFront, msg)
+
+	fromProxy, err := backBar.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	buf := make([]byte, len(msg))
+	if _, err := io.ReadFull(fromProxy, buf); err != nil {
+		t.Fatal(err)
+	}
+	if string(buf) != msg {
+		t.Fatalf("got %q; want %q", buf, msg)
+	}
+}
 func TestProxyPROXYOut(t *testing.T) {
 	front := newLocalListener(t)
 	defer front.Close()
@@ -387,9 +429,9 @@ type tlsServer struct {
 }
 
 func (t *tlsServer) Start() {
-	cert, acmeCert := cert(t.Test, t.Domain), cert(t.Test, t.Domain+".acme.invalid")
+	cert := cert(t.Test, t.Domain)
 	cfg := &tls.Config{
-		Certificates: []tls.Certificate{cert, acmeCert},
+		Certificates: []tls.Certificate{cert},
 	}
 	cfg.BuildNameToCertificate()
 
@@ -453,9 +495,9 @@ func cert(t *testing.T, domain string) tls.Certificate {
 }
 
 // newTLSServer starts a TLS server that serves a self-signed cert for
-// domain, and a corresonding acme.invalid dummy domain.
+// domain.
 func newTLSServer(t *testing.T, domain string) net.Listener {
-	cert, acmeCert := cert(t, domain), cert(t, domain+".acme.invalid")
+	cert := cert(t, domain)
 
 	l := newLocalListener(t)
 	go func() {
@@ -466,7 +508,7 @@ func newTLSServer(t *testing.T, domain string) net.Listener {
 			}
 
 			cfg := &tls.Config{
-				Certificates: []tls.Certificate{cert, acmeCert},
+				Certificates: []tls.Certificate{cert},
 			}
 			conn := tls.Server(rawConn, cfg)
 			if _, err = io.WriteString(conn, domain); err != nil {
@@ -494,54 +536,4 @@ func readTLS(dest, domain string) (string, error) {
 		return "", err
 	}
 	return string(bs), nil
-}
-
-func TestProxyACME(t *testing.T) {
-	log.SetOutput(ioutil.Discard)
-	defer log.SetOutput(os.Stderr)
-
-	front := newLocalListener(t)
-	defer front.Close()
-
-	backFoo := newTLSServer(t, "foo.com")
-	defer backFoo.Close()
-	backBar := newTLSServer(t, "bar.com")
-	defer backBar.Close()
-	backQuux := newTLSServer(t, "quux.com")
-	defer backQuux.Close()
-
-	p := testProxy(t, front)
-	p.AddSNIRoute(testFrontAddr, "foo.com", To(backFoo.Addr().String()))
-	p.AddSNIRoute(testFrontAddr, "bar.com", To(backBar.Addr().String()))
-	p.AddStopACMESearch(testFrontAddr)
-	p.AddSNIRoute(testFrontAddr, "quux.com", To(backQuux.Addr().String()))
-	if err := p.Start(); err != nil {
-		t.Fatal(err)
-	}
-
-	tests := []struct {
-		domain, want string
-		succeeds     bool
-	}{
-		{"foo.com", "foo.com", true},
-		{"bar.com", "bar.com", true},
-		{"quux.com", "quux.com", true},
-		{"xyzzy.com", "", false},
-		{"foo.com.acme.invalid", "foo.com", true},
-		{"bar.com.acme.invalid", "bar.com", true},
-		{"quux.com.acme.invalid", "", false},
-	}
-	for _, test := range tests {
-		got, err := readTLS(front.Addr().String(), test.domain)
-		if test.succeeds {
-			if err != nil {
-				t.Fatalf("readTLS %q got error %q, want nil", test.domain, err)
-			}
-			if got != test.want {
-				t.Fatalf("readTLS %q got %q, want %q", test.domain, got, test.want)
-			}
-		} else if err == nil {
-			t.Fatalf("readTLS %q unexpectedly succeeded", test.domain)
-		}
-	}
 }
