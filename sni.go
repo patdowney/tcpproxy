@@ -49,12 +49,16 @@ func (p *Proxy) AddSNIMatchRoute(ipPort string, matcher Matcher, dest Target) uu
 	return routeId
 }
 
-// AddSNIDynamicSMTPRoute
-func (p *Proxy) AddSNIDynamicSMTPRoute(ipPort string, serverName string, targetLookup SNITargetFunc) uuid.UUID {
-	cfg := p.configFor(ipPort)
-	cfg.negotiateFunc = negotiateSMTPStartTLS(serverName)
+// AddSMTPSNIRouteFunc
+func (p *Proxy) AddSMTPSNIRouteFunc(ipPort string, serverName string, targetLookup SNITargetFunc) uuid.UUID {
+	return p.AddSNIStartTLSFunc(ipPort, negotiateSMTPStartTLS(serverName), targetLookup)
+}
 
-	return p.addRoute(ipPort, sniMatch{targetFunc: targetLookup})
+func (p *Proxy) AddSNIStartTLSFunc(ipPort string, negFn NegotiateFunc, targetFn SNITargetFunc) uuid.UUID {
+	cfg := p.configFor(ipPort)
+	cfg.negotiateFunc = negFn
+
+	return p.addRoute(ipPort, sniMatch{targetFunc: targetFn})
 }
 
 // SNITargetFunc is the func callback used by Proxy.AddSNIRouteFunc.

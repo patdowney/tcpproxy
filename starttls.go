@@ -8,19 +8,18 @@ import (
 )
 
 func greetSMTP(c *textproto.Conn, serverName string) (string, error) {
-	var clientName string
 	c.Writer.PrintfLine("220 %s Service ready", serverName)
 	l, e := c.ReadLine() // "EHLO <client-name>
 	if e != nil {
 		return "", e
 	}
-	n, e := fmt.Sscanf(l, "EHLO %s", &clientName)
+
+	var clientName string
+	_, e = fmt.Sscanf(l, "EHLO %s", &clientName)
 	if e != nil {
 		return "", e
 	}
-	if n != 1 {
-		return "", errors.New("could not read client name from EHLO")
-	}
+
 	return clientName, nil
 }
 
