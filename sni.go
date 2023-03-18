@@ -54,6 +54,10 @@ func (p *Proxy) AddSMTPSNIRouteFunc(ipPort string, serverName string, targetLook
 	return p.AddSNIStartTLSFunc(ipPort, negotiateSMTPStartTLS(serverName), targetLookup)
 }
 
+func (p *Proxy) AddIMAPSNIRouteFunc(ipPort string, targetLookup SNITargetFunc) uuid.UUID {
+	return p.AddSNIStartTLSFunc(ipPort, negotiateIMAPStartTLS(), targetLookup)
+}
+
 func (p *Proxy) AddSNIStartTLSFunc(ipPort string, negFn NegotiateFunc, targetFn SNITargetFunc) uuid.UUID {
 	cfg := p.configFor(ipPort)
 	cfg.negotiateFunc = negFn
@@ -113,7 +117,7 @@ func clientHelloServerName(br *bufio.Reader) (sni string) {
 	if err != nil {
 		return ""
 	}
-	tls.Server(sniSniffConn{r: bytes.NewReader(helloBytes)}, &tls.Config{
+	_ = tls.Server(sniSniffConn{r: bytes.NewReader(helloBytes)}, &tls.Config{
 		GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
 			sni = hello.ServerName
 			return nil, nil
@@ -130,4 +134,4 @@ type sniSniffConn struct {
 }
 
 func (c sniSniffConn) Read(p []byte) (int, error) { return c.r.Read(p) }
-func (sniSniffConn) Write(p []byte) (int, error)  { return 0, io.EOF }
+func (sniSniffConn) Write(_ []byte) (int, error)  { return 0, io.EOF }
