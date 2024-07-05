@@ -91,12 +91,12 @@ func (m sniMatch) match(br *bufio.Reader) (Target, string) {
 		if t, ok := m.targetFunc(context.TODO(), sni); ok {
 			return t, sni
 		}
-		return nil, ""
+		return nil, sni
 	}
 	if m.matcher(context.TODO(), sni) {
 		return m.target, sni
 	}
-	return nil, ""
+	return nil, sni
 }
 
 // clientHelloServerName returns the SNI server name inside the TLS ClientHello,

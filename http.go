@@ -53,7 +53,7 @@ func (m httpHostMatch) match(br *bufio.Reader) (Target, string) {
 	if m.matcher(context.TODO(), hh) {
 		return m.target, hh
 	}
-	return nil, ""
+	return nil, hh
 }
 
 // httpHostHeader returns the HTTP Host header from br without

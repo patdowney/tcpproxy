@@ -326,14 +326,14 @@ func findRoute(routes []routeWithId, br *bufio.Reader) (Target, string) {
 
 	for _, routeWithId := range routes {
 		target, hostName := routeWithId.Route.match(br)
+		matchedHostname = hostName
 		if target != nil {
-			matchedHostname = hostName
 			matchedRoutes = append(matchedRoutes, target)
 		}
 	}
 
 	if len(matchedRoutes) == 0 {
-		return nil, ""
+		return nil, matchedHostname
 	}
 
 	if len(matchedRoutes) == 1 {
@@ -379,7 +379,12 @@ func (p *Proxy) serveConn(c net.Conn, cfg *config) bool {
 		cfg.defaultTarget.HandleConn(c)
 		return true
 	}
-	log.Printf("tcpproxy: no routes matched conn %v/%v; closing", c.RemoteAddr().String(), c.LocalAddr().String())
+
+	if hostName == "" {
+		log.Printf("tcpproxy: no routes matched conn %v/%v; closing", c.RemoteAddr().String(), c.LocalAddr().String())
+	} else {
+		log.Printf("tcpproxy: no route matched '%s', conn %v/%v; closing", hostName, c.RemoteAddr().String(), c.LocalAddr().String())
+	}
 
 	c.Close()
 	return false
