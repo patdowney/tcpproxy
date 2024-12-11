@@ -596,7 +596,10 @@ func (dp *DialProxy) sendProxyHeader(w io.Writer, src net.Conn) error {
 // named goroutines in debug goroutine stack dumps.
 func proxyCopy(errc chan<- error, dst, src net.Conn) {
 	defer closeRead(src)
-	defer closeWrite(dst)
+	defer func() {
+		closeWrite(dst)
+		goCloseConn(dst)
+	}()
 
 	// Before we unwrap src and/or dst, copy any buffered data.
 	if wc, ok := src.(*Conn); ok && len(wc.Peeked) > 0 {
