@@ -96,6 +96,8 @@ type Matcher func(ctx context.Context, hostname string) bool
 
 type NegotiateFunc func(gc net.Conn, cfg *config) bool
 
+type NegotiateBackendFunc func(src *Conn, dst net.Conn) error
+
 // equals is a trivial Matcher that implements string equality.
 func equals(want string) Matcher {
 	return func(_ context.Context, got string) bool {
@@ -351,6 +353,7 @@ func findRoute(routes []routeWithId, br *bufio.Reader) (Target, string) {
 func (p *Proxy) serveConn(c net.Conn, cfg *config) bool {
 	if cfg.negotiateFunc != nil {
 		if !cfg.negotiateFunc(c, cfg) {
+			c.Close()
 			return false
 		}
 	}
@@ -444,6 +447,8 @@ func To(addr string) *DialProxy {
 	return &DialProxy{Addr: addr}
 }
 
+type AccessLogger func(net.Conn, net.Conn)
+
 // DialProxy implements Target by dialing a new connection to Addr
 // and then proxying data back and forth.
 //
@@ -480,6 +485,11 @@ type DialProxy struct {
 	// no graceful downgrade.
 	// If zero, no PROXY header is sent. Currently, version 1 is supported.
 	ProxyProtocolVersion int
+
+	// NegotiateBackendFunc optionally specifies a function to negotiate the backend connection.
+	NegotiateBackendFunc NegotiateBackendFunc
+
+	AccessLogger AccessLogger
 }
 
 // UnderlyingConn returns c.Conn if c of type *Conn,
@@ -538,6 +548,7 @@ func (dp *DialProxy) HandleConn(src net.Conn) {
 	}
 	defer goCloseConn(src)
 
+
 	if ka := dp.keepAlivePeriod(); ka > 0 {
 		for _, c := range []net.Conn{src, dst} {
 			if c, ok := tcpConn(c); ok {
@@ -545,6 +556,19 @@ func (dp *DialProxy) HandleConn(src net.Conn) {
 				c.SetKeepAlivePeriod(ka)
 			}
 		}
+	}
+
+	if dp.NegotiateBackendFunc != nil {
+		srcConn := src.(*Conn)
+		err = dp.NegotiateBackendFunc(srcConn, dst)
+		if err != nil {
+			dp.onDialError()(src, err)
+			return
+		}
+	}
+
+	if dp.AccessLogger != nil {
+		dp.AccessLogger(src, dst)
 	}
 
 	errc := make(chan error, 2)
