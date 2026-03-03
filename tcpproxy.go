@@ -511,16 +511,19 @@ func tcpConn(c net.Conn) (t *net.TCPConn, ok bool) {
 	return nil, false
 }
 
-func goCloseConn(c net.Conn) { go c.Close() }
+type closeReader interface{ CloseRead() error }
+type closeWriter interface{ CloseWrite() error }
 
 func closeRead(c net.Conn) {
-	if c, ok := tcpConn(c); ok {
+	// prefer the interfaces, for compatibility with e.g. gvisor/netstack.
+	if c, ok := UnderlyingConn(c).(closeReader); ok {
 		c.CloseRead()
 	}
 }
 
 func closeWrite(c net.Conn) {
-	if c, ok := tcpConn(c); ok {
+	// prefer the interfaces, for compatibility with e.g. gvisor/netstack.
+	if c, ok := UnderlyingConn(c).(closeWriter); ok {
 		c.CloseWrite()
 	}
 }
@@ -540,13 +543,13 @@ func (dp *DialProxy) HandleConn(src net.Conn) {
 		dp.onDialError()(src, err)
 		return
 	}
-	defer goCloseConn(dst)
+	defer dst.Close()
 
 	if err = dp.sendProxyHeader(dst, src); err != nil {
 		dp.onDialError()(src, err)
 		return
 	}
-	defer goCloseConn(src)
+	defer src.Close()
 
 
 	if ka := dp.keepAlivePeriod(); ka > 0 {
@@ -671,7 +674,13 @@ func (dp *DialProxy) onDialError() func(src net.Conn, dstDialErr error) {
 		return dp.OnDialError
 	}
 	return func(src net.Conn, dstDialErr error) {
-		log.Printf("tcpproxy: for incoming conn %v, error dialing %q: %v", src.RemoteAddr().String(), dp.Addr, dstDialErr)
+		var remoteAddr string
+		if ra := src.RemoteAddr(); ra != nil {
+			remoteAddr = ra.String()
+		} else {
+			remoteAddr = fmt.Sprintf("[%T with nil RemoteAddr]", src)
+		}
+		log.Printf("tcpproxy: for incoming conn %v, error dialing %q: %v", remoteAddr, dp.Addr, dstDialErr)
 		src.Close()
 	}
 }
