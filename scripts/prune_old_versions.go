@@ -37,7 +37,7 @@ var (
 	limit         = flag.Int("limit", 2, "package versions to keep")
 )
 
-func fatalf(msg string, args ...interface{}) {
+func fatalf(msg string, args ...any) {
 	fmt.Printf(msg+"\n", args...)
 	os.Exit(1)
 }

@@ -108,11 +108,11 @@ var (
 )
 
 func httpHostHeaderFromBytes(b []byte) string {
-	if i := bytes.Index(b, lfHostColon); i != -1 {
-		return string(bytes.TrimSpace(untilEOL(b[i+len(lfHostColon):])))
+	if _, after, ok := bytes.Cut(b, lfHostColon); ok {
+		return string(bytes.TrimSpace(untilEOL(after)))
 	}
-	if i := bytes.Index(b, lfhostColon); i != -1 {
-		return string(bytes.TrimSpace(untilEOL(b[i+len(lfhostColon):])))
+	if _, after, ok := bytes.Cut(b, lfhostColon); ok {
+		return string(bytes.TrimSpace(untilEOL(after)))
 	}
 	return ""
 }
@@ -120,8 +120,8 @@ func httpHostHeaderFromBytes(b []byte) string {
 // untilEOL returns v, truncated before the first '\n' byte, if any.
 // The returned slice may include a '\r' at the end.
 func untilEOL(v []byte) []byte {
-	if i := bytes.IndexByte(v, '\n'); i != -1 {
-		return v[:i]
+	if before, _, ok := bytes.Cut(v, []byte{'\n'}); ok {
+		return before
 	}
 	return v
 }

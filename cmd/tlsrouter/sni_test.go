@@ -21,7 +21,7 @@ import (
 
 func slice(l int) []byte {
 	ret := make([]byte, l)
-	for i := 0; i < l; i++ {
+	for i := range l {
 		ret[i] = byte(i)
 	}
 	return ret

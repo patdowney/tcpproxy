@@ -45,7 +45,7 @@ func dnsRegex(s string) (*regexp.Regexp, error) {
 	}
 
 	var b []string
-	for _, f := range strings.Split(s, ".") {
+	for f := range strings.SplitSeq(s, ".") {
 		switch f {
 		case "*":
 			b = append(b, `[^.]+`)

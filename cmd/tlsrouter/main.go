@@ -84,12 +84,12 @@ type Conn struct {
 	backendConn *net.TCPConn
 }
 
-func (c *Conn) logf(msg string, args ...interface{}) {
+func (c *Conn) logf(msg string, args ...any) {
 	msg = fmt.Sprintf(msg, args...)
 	log.Printf("%s <> %s: %s", c.RemoteAddr(), c.LocalAddr(), msg)
 }
 
-func (c *Conn) abort(alert byte, msg string, args ...interface{}) {
+func (c *Conn) abort(alert byte, msg string, args ...any) {
 	c.logf(msg, args...)
 	alertMsg := []byte{21, 3, byte(c.tlsMinor), 0, 2, 2, alert}
 
@@ -106,8 +106,8 @@ func (c *Conn) abort(alert byte, msg string, args ...interface{}) {
 	}
 }
 
-func (c *Conn) internalError(msg string, args ...interface{}) { c.abort(80, msg, args...) }
-func (c *Conn) sniFailed(msg string, args ...interface{})     { c.abort(112, msg, args...) }
+func (c *Conn) internalError(msg string, args ...any) { c.abort(80, msg, args...) }
+func (c *Conn) sniFailed(msg string, args ...any)     { c.abort(112, msg, args...) }
 
 func (c *Conn) proxy() {
 	defer c.Close()

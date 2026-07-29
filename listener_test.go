@@ -21,7 +21,7 @@ import (
 
 func TestListenerAccept(t *testing.T) {
 	tl := new(TargetListener)
-	ch := make(chan interface{}, 1)
+	ch := make(chan any, 1)
 	go func() {
 		for {
 			conn, err := tl.Accept()
@@ -33,7 +33,7 @@ func TestListenerAccept(t *testing.T) {
 		}
 	}()
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		conn := new(Conn)
 		tl.HandleConn(conn)
 		got := <-ch
