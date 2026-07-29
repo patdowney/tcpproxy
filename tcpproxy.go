@@ -56,7 +56,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
-        "fmt"
+	"fmt"
 	"io"
 	"log"
 	"math/rand"
@@ -487,6 +487,13 @@ type DialProxy struct {
 	// If zero, no PROXY header is sent. Currently, version 1 is supported.
 	ProxyProtocolVersion int
 
+	// TLVs optionally specifies custom PROXY protocol v2 Type-Length-Value
+	// entries to attach to a freshly-built header. Ignored when
+	// ProxyProtocolVersion is 0, and when sendProxyHeader passes through an
+	// existing header from an already-PROXY-protocol-wrapped src connection
+	// (that header's own TLVs are relayed as-is, unmodified).
+	TLVs []proxyproto.TLV
+
 	// NegotiateBackendFunc optionally specifies a function to negotiate the backend connection.
 	NegotiateBackendFunc NegotiateBackendFunc
 
@@ -552,7 +559,6 @@ func (dp *DialProxy) HandleConn(src net.Conn) {
 	}
 	defer src.Close()
 
-
 	if ka := dp.keepAlivePeriod(); ka > 0 {
 		for _, c := range []net.Conn{src, dst} {
 			if c, ok := tcpConn(c); ok {
@@ -611,6 +617,12 @@ func (dp *DialProxy) sendProxyHeader(w io.Writer, src net.Conn) error {
 			TransportProtocol: transportProtocol,
 			SourceAddr:        srcAddr,
 			DestinationAddr:   dstAddr,
+		}
+
+		if len(dp.TLVs) > 0 {
+			if err := header.SetTLVs(dp.TLVs); err != nil {
+				return err
+			}
 		}
 	}
 	// After the connection was created write the proxy headers first
