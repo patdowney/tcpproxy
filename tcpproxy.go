@@ -68,6 +68,14 @@ import (
 	"github.com/pires/go-proxyproto"
 )
 
+// Logger is the interface used by Proxy and DialProxy to report internal
+// routing and dial errors. It is satisfied by *log.Logger, so callers that
+// want the previous behavior can assign the standard library's default
+// logger explicitly.
+type Logger interface {
+	Printf(format string, v ...any)
+}
+
 // Proxy is a proxy. Its zero value is a valid proxy that does
 // nothing. Call methods to add routes before calling Start or Run.
 //
@@ -85,6 +93,19 @@ type Proxy struct {
 	// function. If nil, net.Dial is used.
 	// The provided net is always "tcp".
 	ListenFunc func(net, laddr string) (net.Listener, error)
+
+	// Logger optionally specifies where to report routing errors (no route
+	// matched, default target used). If nil, the standard library log
+	// package is used.
+	Logger Logger
+}
+
+// logger returns p.Logger, or the standard library log package if unset.
+func (p *Proxy) logger() Logger {
+	if p.Logger != nil {
+		return p.Logger
+	}
+	return log.Default()
 }
 
 // Matcher reports whether hostname matches the Matcher's criteria.
@@ -377,17 +398,16 @@ func (p *Proxy) serveConn(c net.Conn, cfg *config) bool {
 		return true
 	}
 
-	// TODO: hook for this?
 	if cfg.defaultTarget != nil {
-		log.Printf("tcpproxy: no matching routes found for %s. using default target %s", hostName, cfg.defaultTarget)
+		p.logger().Printf("tcpproxy: no matching routes found for %s. using default target %s", hostName, cfg.defaultTarget)
 		cfg.defaultTarget.HandleConn(c)
 		return true
 	}
 
 	if hostName == "" {
-		log.Printf("tcpproxy: no routes matched conn %v/%v; closing", c.RemoteAddr().String(), c.LocalAddr().String())
+		p.logger().Printf("tcpproxy: no routes matched conn %v/%v; closing", c.RemoteAddr().String(), c.LocalAddr().String())
 	} else {
-		log.Printf("tcpproxy: no route matched '%s', conn %v/%v; closing", hostName, c.RemoteAddr().String(), c.LocalAddr().String())
+		p.logger().Printf("tcpproxy: no route matched '%s', conn %v/%v; closing", hostName, c.RemoteAddr().String(), c.LocalAddr().String())
 	}
 
 	c.Close()
@@ -498,6 +518,19 @@ type DialProxy struct {
 	NegotiateBackendFunc NegotiateBackendFunc
 
 	AccessLogger AccessLogger
+
+	// Logger optionally specifies where to report the default OnDialError
+	// handler's dial failures. If nil, the standard library log package is
+	// used. Ignored when OnDialError is set.
+	Logger Logger
+}
+
+// logger returns dp.Logger, or the standard library log package if unset.
+func (dp *DialProxy) logger() Logger {
+	if dp.Logger != nil {
+		return dp.Logger
+	}
+	return log.Default()
 }
 
 // UnderlyingConn returns c.Conn if c of type *Conn,
@@ -690,7 +723,7 @@ func (dp *DialProxy) onDialError() func(src net.Conn, dstDialErr error) {
 		} else {
 			remoteAddr = fmt.Sprintf("[%T with nil RemoteAddr]", src)
 		}
-		log.Printf("tcpproxy: for incoming conn %v, error dialing %q: %v", remoteAddr, dp.Addr, dstDialErr)
+		dp.logger().Printf("tcpproxy: for incoming conn %v, error dialing %q: %v", remoteAddr, dp.Addr, dstDialErr)
 		src.Close()
 	}
 }
