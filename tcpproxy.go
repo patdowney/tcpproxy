@@ -116,7 +116,14 @@ type Matcher func(ctx context.Context, hostname string) bool
 // - otherwise returns an ip:port string and nil if a match is found
 //type TargetLookup func(ctx context.Context, hostname string) (string, error)
 
-type NegotiateFunc func(gc net.Conn, cfg *config) bool
+// NegotiateFunc runs a plaintext negotiation (e.g. SMTP/IMAP STARTTLS) over c
+// before route matching begins. On success it returns ok=true and, if the
+// negotiation itself buffered any reads from c, the *bufio.Reader that holds
+// them so route matching can continue from the same reader instead of losing
+// bytes the client pipelined immediately after the negotiation (e.g. a TLS
+// ClientHello sent in the same write as "STARTTLS"). br may be nil on success
+// if the negotiation did no buffered reads of its own.
+type NegotiateFunc func(gc net.Conn, cfg *config) (br *bufio.Reader, ok bool)
 
 type NegotiateBackendFunc func(src *Conn, dst net.Conn) error
 
@@ -373,14 +380,19 @@ func findRoute(routes []routeWithId, br *bufio.Reader) (Target, string) {
 // serveConn runs in its own goroutine and matches c against routes.
 // It returns whether it matched purely for testing.
 func (p *Proxy) serveConn(c net.Conn, cfg *config) bool {
+	var br *bufio.Reader
 	if cfg.negotiateFunc != nil {
-		if !cfg.negotiateFunc(c, cfg) {
+		negotiatedBr, ok := cfg.negotiateFunc(c, cfg)
+		if !ok {
+			p.logger().Printf("tcpproxy: negotiation failed for conn %v/%v; closing", c.RemoteAddr().String(), c.LocalAddr().String())
 			c.Close()
 			return false
 		}
+		br = negotiatedBr
 	}
-
-	br := bufio.NewReader(c)
+	if br == nil {
+		br = bufio.NewReader(c)
+	}
 
 	target, hostName := findRoute(cfg.Routes(), br)
 
@@ -620,11 +632,14 @@ func (dp *DialProxy) HandleConn(src net.Conn) {
 		dp.AccessLogger(src, dst)
 	}
 
-	errc := make(chan error, 2)
-	go proxyCopy(errc, src, dst)
-	go proxyCopy(errc, dst, src)
-	<-errc
-	<-errc
+	resultc := make(chan copyResult, 2)
+	go proxyCopy(resultc, src, dst)
+	go proxyCopy(resultc, dst, src)
+	for range 2 {
+		if r := <-resultc; r.err != nil {
+			dp.logger().Printf("tcpproxy: copy error for conn %v -> %s (%d bytes copied): %v", src.RemoteAddr(), dp.Addr, r.written, r.err)
+		}
+	}
 }
 
 func (dp *DialProxy) sendProxyHeader(w io.Writer, src net.Conn) error {
@@ -670,17 +685,25 @@ func (dp *DialProxy) sendProxyHeader(w io.Writer, src net.Conn) error {
 	return err
 }
 
+// copyResult carries the outcome of one direction of a proxyCopy relay, so
+// callers can log mid-relay errors (and how much was copied before they
+// occurred) instead of discarding them.
+type copyResult struct {
+	written int64
+	err     error
+}
+
 // proxyCopy is the function that copies bytes around.
 // It's a named function instead of a func literal so users get
 // named goroutines in debug goroutine stack dumps.
-func proxyCopy(errc chan<- error, dst, src net.Conn) {
+func proxyCopy(resultc chan<- copyResult, dst, src net.Conn) {
 	defer closeRead(src)
 	defer closeWrite(dst)
 
 	// Before we unwrap src and/or dst, copy any buffered data.
 	if wc, ok := src.(*Conn); ok && len(wc.Peeked) > 0 {
 		if _, err := dst.Write(wc.Peeked); err != nil {
-			errc <- err
+			resultc <- copyResult{err: err}
 			return
 		}
 		wc.Peeked = nil
@@ -691,8 +714,8 @@ func proxyCopy(errc chan<- error, dst, src net.Conn) {
 	src = UnderlyingConn(src)
 	dst = UnderlyingConn(dst)
 
-	_, err := io.Copy(dst, src)
-	errc <- err
+	n, err := io.Copy(dst, src)
+	resultc <- copyResult{written: n, err: err}
 }
 
 func (dp *DialProxy) keepAlivePeriod() time.Duration {

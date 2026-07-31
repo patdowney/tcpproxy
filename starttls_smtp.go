@@ -1,15 +1,23 @@
 package tcpproxy
 
 import (
-	"errors"
+	"bufio"
 	"fmt"
 	"net"
 	"net/textproto"
 )
 
-func greetSMTP(c *textproto.Conn, serverName string) (string, error) {
-	c.Writer.PrintfLine("220 %s Service ready", serverName)
-	l, e := c.ReadLine() // "EHLO <client-name>
+// sniPeekBufferSize bounds how much of the client's plaintext negotiation
+// and subsequent TLS ClientHello can be buffered/peeked. It's sized above
+// the TLS spec's maximum plaintext record length (16384 bytes) so a
+// ClientHello with many extensions (common with modern/enterprise mail
+// senders) doesn't overflow Peek and get silently treated as "no SNI" by
+// clientHelloServerName in sni.go.
+const sniPeekBufferSize = 20 * 1024
+
+func greetSMTP(r *textproto.Reader, w *textproto.Writer, serverName string) (string, error) {
+	w.PrintfLine("220 %s Service ready", serverName)
+	l, e := r.ReadLine() // "EHLO <client-name>
 	if e != nil {
 		return "", e
 	}
@@ -23,33 +31,42 @@ func greetSMTP(c *textproto.Conn, serverName string) (string, error) {
 	return clientName, nil
 }
 
-func negotiateSMTPTLS(c *textproto.Conn, smtpServerName string) error {
-	c.Writer.PrintfLine("250-%s G'day!", smtpServerName)
-	c.Writer.PrintfLine("250 STARTTLS")
-	cmd, err := c.ReadLine() // "STARTTLS"
-	if err == nil {
-		if cmd == "STARTTLS" {
-			c.Writer.PrintfLine("220 Go ahead")
-			return nil
-		}
-		return errors.New("expecting STARTTLS")
+func negotiateSMTPTLS(r *textproto.Reader, w *textproto.Writer, smtpServerName string) error {
+	w.PrintfLine("250-%s G'day!", smtpServerName)
+	w.PrintfLine("250 STARTTLS")
+	cmd, err := r.ReadLine() // "STARTTLS"
+	if err != nil {
+		return err
+	}
+	if cmd != "STARTTLS" {
+		return fmt.Errorf("expecting STARTTLS, got %q", cmd)
 	}
 
-	return err
+	w.PrintfLine("220 Go ahead")
+	return nil
 }
 
 func negotiateSMTPStartTLS(serverName string) NegotiateFunc {
-	return func(c net.Conn, cfg *config) bool {
-		// negotiate STARTTLS
-		t := textproto.NewConn(c)
-		_, err := greetSMTP(t, serverName)
+	return func(c net.Conn, cfg *config) (*bufio.Reader, bool) {
+		// Negotiate STARTTLS over a single, larger-than-default buffered
+		// reader, and hand that same reader back on success so route
+		// matching (the SNI peek in sni.go) continues reading from it
+		// instead of a fresh bufio.Reader(c). Without this, any bytes the
+		// client pipelines immediately after "STARTTLS" (e.g. its TLS
+		// ClientHello, sent before waiting for "220 Go ahead") would be
+		// silently absorbed into the negotiation reader's buffer and lost
+		// when a new reader was created for the peek step.
+		br := bufio.NewReaderSize(c, sniPeekBufferSize)
+		r := textproto.NewReader(br)
+		w := textproto.NewWriter(bufio.NewWriter(c))
+
+		_, err := greetSMTP(r, w, serverName)
 		if err == nil {
-			err := negotiateSMTPTLS(t, serverName)
-			if err == nil {
-				return true
+			if err := negotiateSMTPTLS(r, w, serverName); err == nil {
+				return br, true
 			}
 		}
-		t.Close()
-		return false
+		c.Close()
+		return nil, false
 	}
 }
