@@ -463,7 +463,13 @@ type Target interface {
 	HandleConn(net.Conn)
 }
 
-// To is a shorthand way of writing &tcpproxy.DialProxy{Addr: addr}.
+type srcAddrContextKey struct{}
+
+// SourceAddrContextKey is the context key used by DialProxy.HandleConn to
+// pass the incoming connection's remote address (net.Addr) to DialContext.
+var SourceAddrContextKey srcAddrContextKey
+
+// To is shorthand way of writing &tcpproxy.DialProxy{Addr: addr}.
 func To(addr string) *DialProxy {
 	return &DialProxy{Addr: addr}
 }
@@ -571,7 +577,7 @@ func closeWrite(c net.Conn) {
 
 // HandleConn implements the Target interface.
 func (dp *DialProxy) HandleConn(src net.Conn) {
-	ctx := context.Background()
+	ctx := context.WithValue(context.Background(), SourceAddrContextKey, src.RemoteAddr())
 	var cancel context.CancelFunc
 	if dp.DialTimeout >= 0 {
 		ctx, cancel = context.WithTimeout(ctx, dp.dialTimeout())
