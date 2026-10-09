@@ -64,7 +64,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
 	"github.com/pires/go-proxyproto"
 )
 

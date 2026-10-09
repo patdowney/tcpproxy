@@ -20,7 +20,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 // AddHTTPHostRoute appends a route to the ipPort listener that

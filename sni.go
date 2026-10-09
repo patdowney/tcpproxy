@@ -22,7 +22,7 @@ import (
 	"io"
 	"net"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 // AddSNIRoute appends a route to the ipPort listener that routes to
