@@ -65,8 +65,8 @@ import (
 	"syscall"
 	"time"
 
-	"uuid"
 	"github.com/pires/go-proxyproto"
+	"uuid"
 )
 
 // Logger is the interface used by Proxy and DialProxy to report internal
@@ -99,6 +99,23 @@ type Proxy struct {
 	// matched, default target used). If nil, the standard library log
 	// package is used.
 	Logger Logger
+
+	// HandshakeTimeout optionally bounds how long an accepted connection may
+	// take to complete any plaintext negotiation (SMTP/IMAP STARTTLS) and
+	// send enough bytes to be routed. The deadline is cleared before the
+	// connection is handed to its Target, so it never limits the proxied
+	// session. Without it, a client that connects and sends nothing holds a
+	// goroutine and a file descriptor indefinitely. Zero disables it.
+	HandshakeTimeout time.Duration
+
+	// MaxConnections optionally caps the number of accepted connections the
+	// proxy serves at once, across all listeners: a connection counts from
+	// accept until its Target's HandleConn returns. A connection accepted at
+	// the cap is closed immediately rather than queued, so overload fails
+	// fast instead of exhausting file descriptors. Zero means no limit.
+	MaxConnections int
+
+	connSlots chan struct{} // nil when MaxConnections is zero
 }
 
 // logger returns p.Logger, or the standard library log package if unset.
@@ -315,6 +332,9 @@ func (p *Proxy) Start() error {
 		return errors.New("already started")
 	}
 	p.donec = make(chan struct{})
+	if p.MaxConnections > 0 {
+		p.connSlots = make(chan struct{}, p.MaxConnections)
+	}
 	errc := make(chan error, len(p.configs))
 	p.lns = make([]net.Listener, 0, len(p.configs))
 	for ipPort, config := range p.configs {
@@ -366,8 +386,39 @@ func (p *Proxy) serveListener(ret chan<- error, ln net.Listener, cfg *config) {
 		}
 		delay = 0
 
-		go p.serveConn(c, cfg)
+		if !p.acquireConnSlot() {
+			p.logger().Printf("tcpproxy: connection limit %d reached; closing conn %v/%v", p.MaxConnections, c.RemoteAddr(), c.LocalAddr())
+			c.Close()
+			continue
+		}
+		go func() {
+			defer p.releaseConnSlot()
+			p.serveConn(c, cfg)
+		}()
 	}
+}
+
+// acquireConnSlot reserves room for one more connection under
+// MaxConnections without blocking. It reports false when the proxy is at the
+// limit. With no limit configured it always succeeds.
+func (p *Proxy) acquireConnSlot() bool {
+	if p.connSlots == nil {
+		return true
+	}
+	select {
+	case p.connSlots <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+// releaseConnSlot returns a slot taken by acquireConnSlot.
+func (p *Proxy) releaseConnSlot() {
+	if p.connSlots == nil {
+		return
+	}
+	<-p.connSlots
 }
 
 func nextAcceptDelay(delay time.Duration) time.Duration {
@@ -424,6 +475,13 @@ func findRoute(routes []routeWithId, br *bufio.Reader) (Target, string) {
 // serveConn runs in its own goroutine and matches c against routes.
 // It returns whether it matched purely for testing.
 func (p *Proxy) serveConn(c net.Conn, cfg *config) bool {
+	if p.HandshakeTimeout > 0 {
+		// Bound negotiation and route matching. A failed read past the
+		// deadline makes the negotiation or the route match fail, and the
+		// connection is closed below like any other unroutable one.
+		_ = c.SetDeadline(time.Now().Add(p.HandshakeTimeout))
+	}
+
 	var br *bufio.Reader
 	if cfg.negotiateFunc != nil {
 		negotiatedBr, ok := cfg.negotiateFunc(c, cfg)
@@ -439,6 +497,11 @@ func (p *Proxy) serveConn(c net.Conn, cfg *config) bool {
 	}
 
 	target, hostName := findRoute(cfg.Routes(), br)
+
+	if p.HandshakeTimeout > 0 {
+		// The handshake is over; the proxied session is the Target's to bound.
+		_ = c.SetDeadline(time.Time{})
+	}
 
 	if n := br.Buffered(); n > 0 {
 		peeked, _ := br.Peek(br.Buffered())
