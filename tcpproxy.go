@@ -62,6 +62,7 @@ import (
 	"math/rand"
 	"net"
 	"sync"
+	"syscall"
 	"time"
 
 	"uuid"
@@ -339,16 +340,59 @@ func (p *Proxy) awaitFirstError(errc <-chan error) {
 	close(p.donec)
 }
 
+// Accept retry delays, as in net/http.Server.Serve.
+const (
+	acceptRetryMin = 5 * time.Millisecond
+	acceptRetryMax = time.Second
+)
+
+// serveListener accepts connections on ln until the listener fails for good.
+// A transient Accept error, such as running out of file descriptors, is retried
+// with a growing delay rather than ending the listener: it passes once load
+// does, and ending would take every route on the listener down with it.
 func (p *Proxy) serveListener(ret chan<- error, ln net.Listener, cfg *config) {
+	var delay time.Duration
 	for {
 		c, err := ln.Accept()
 		if err != nil {
-			ret <- err
-			return
+			if !isTransientAcceptError(err) {
+				ret <- err
+				return
+			}
+			delay = nextAcceptDelay(delay)
+			p.logger().Printf("tcpproxy:accept error on %v: %v; retrying in %v", ln.Addr(), err, delay)
+			time.Sleep(delay)
+			continue
 		}
+		delay = 0
 
 		go p.serveConn(c, cfg)
 	}
+}
+
+func nextAcceptDelay(delay time.Duration) time.Duration {
+	if delay == 0 {
+		return acceptRetryMin
+	}
+	return min(delay*2, acceptRetryMax)
+}
+
+// isTransientAcceptError reports whether an Accept error is one that a later
+// Accept may get past: a timeout, a connection reset before it was accepted, or
+// resource exhaustion. A closed listener and anything unrecognised are not.
+func isTransientAcceptError(err error) bool {
+	if errors.Is(err, net.ErrClosed) {
+		return false
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return true
+	}
+	return errors.Is(err, syscall.EMFILE) ||
+		errors.Is(err, syscall.ENFILE) ||
+		errors.Is(err, syscall.ENOBUFS) ||
+		errors.Is(err, syscall.ENOMEM) ||
+		errors.Is(err, syscall.ECONNABORTED)
 }
 
 func findRoute(routes []routeWithId, br *bufio.Reader) (Target, string) {
