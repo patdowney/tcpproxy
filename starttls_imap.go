@@ -8,24 +8,60 @@ import (
 	"strings"
 )
 
-func negotiateIMAPTLS(r *textproto.Reader, w *textproto.Writer) error {
-	w.PrintfLine("* OK [CAPABILITY IMAP4rev1 STARTTLS LOGINDISABLED] IMAP4rev1 Service Ready")
+// imapCapabilities is what the pre-TLS front end offers: STARTTLS, and no
+// login until the connection is upgraded and handed to the real server.
+const imapCapabilities = "IMAP4rev1 STARTTLS LOGINDISABLED"
 
-	cmdString, err := r.ReadLine() // "STARTTLS"
-	if err != nil {
+// maxIMAPPreTLSCommands bounds how many commands a client may send before
+// STARTTLS, so a connection can't be held open in the plaintext stage.
+const maxIMAPPreTLSCommands = 8
+
+// negotiateIMAPTLS answers commands until the client asks for STARTTLS.
+// Clients commonly send CAPABILITY first, to confirm STARTTLS is offered,
+// and some send NOOP; both are answered. LOGOUT ends the connection, and
+// anything else gets BAD, as it can't be served before TLS.
+func negotiateIMAPTLS(r *textproto.Reader, w *textproto.Writer) error {
+	if err := w.PrintfLine("* OK [CAPABILITY %s] IMAP4rev1 Service Ready", imapCapabilities); err != nil {
 		return err
 	}
 
-	tag, cmd, found := strings.Cut(cmdString, " ")
-	if !found {
-		return fmt.Errorf("malformed command line %q", cmdString)
+	for range maxIMAPPreTLSCommands {
+		line, err := r.ReadLine()
+		if err != nil {
+			return err
+		}
+
+		tag, rest, found := strings.Cut(line, " ")
+		if !found {
+			return fmt.Errorf("malformed command line %q", line)
+		}
+		cmd, _, _ := strings.Cut(rest, " ")
+
+		switch strings.ToUpper(cmd) {
+		case "STARTTLS":
+			return w.PrintfLine("%s OK Begin TLS negotiation now", tag)
+		case "CAPABILITY":
+			if err := w.PrintfLine("* CAPABILITY %s", imapCapabilities); err != nil {
+				return err
+			}
+			if err := w.PrintfLine("%s OK CAPABILITY completed", tag); err != nil {
+				return err
+			}
+		case "NOOP":
+			if err := w.PrintfLine("%s OK NOOP completed", tag); err != nil {
+				return err
+			}
+		case "LOGOUT":
+			_ = w.PrintfLine("* BYE Logging out")
+			_ = w.PrintfLine("%s OK LOGOUT completed", tag)
+			return fmt.Errorf("client logged out before STARTTLS")
+		default:
+			if err := w.PrintfLine("%s BAD %s is not available before STARTTLS", tag, cmd); err != nil {
+				return err
+			}
+		}
 	}
-	if cmd == "STARTTLS" {
-		w.PrintfLine("%s OK Begin TLS negotiation now", tag)
-		return nil
-	}
-	w.PrintfLine("%s %s Unsupported command", tag, cmd)
-	return fmt.Errorf("unsupported command %s received", cmd)
+	return fmt.Errorf("no STARTTLS after %d commands", maxIMAPPreTLSCommands)
 }
 
 func negotiateIMAPStartTLS() NegotiateFunc {
