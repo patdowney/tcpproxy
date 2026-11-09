@@ -2,6 +2,7 @@ package tcpproxy
 
 import (
 	"bufio"
+	"errors"
 	"io"
 	"net"
 	"strings"
@@ -71,9 +72,9 @@ func TestIMAPStartTLSAfterCapability(t *testing.T) {
 		}
 	}()
 
-	br, ok := negotiateIMAPStartTLS()(server, &config{})
-	if !ok {
-		t.Fatal("negotiation failed")
+	br, err := negotiateIMAPStartTLS()(server, &config{})
+	if err != nil {
+		t.Fatalf("negotiation failed: %v", err)
 	}
 
 	if got := clientHelloServerName(br); got != hostName {
@@ -129,7 +130,7 @@ func TestIMAPStartTLSRefusals(t *testing.T) {
 				client.Close()
 			}()
 
-			if _, ok := negotiateIMAPStartTLS()(server, &config{}); ok {
+			if _, err := negotiateIMAPStartTLS()(server, &config{}); err == nil {
 				t.Fatal("negotiation succeeded without STARTTLS")
 			}
 			<-done
@@ -160,7 +161,8 @@ func TestIMAPStartTLSCommandLimit(t *testing.T) {
 		}
 	}()
 
-	if _, ok := negotiateIMAPStartTLS()(server, &config{}); ok {
-		t.Fatalf("negotiation succeeded after %d commands without STARTTLS", maxIMAPPreTLSCommands)
+	_, err := negotiateIMAPStartTLS()(server, &config{})
+	if !errors.Is(err, ErrNoStartTLS) {
+		t.Fatalf("negotiation after %d commands without STARTTLS: got %v, want %v", maxIMAPPreTLSCommands, err, ErrNoStartTLS)
 	}
 }

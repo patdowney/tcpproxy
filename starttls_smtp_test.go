@@ -53,9 +53,9 @@ func TestSMTPStartTLSPipelinedClientHello(t *testing.T) {
 	}()
 
 	negotiate := negotiateSMTPStartTLS("test.local")
-	br, ok := negotiate(server, &config{})
-	if !ok {
-		t.Fatal("negotiation failed")
+	br, err := negotiate(server, &config{})
+	if err != nil {
+		t.Fatalf("negotiation failed: %v", err)
 	}
 	if err := <-clientErrc; err != nil {
 		t.Fatalf("client side failed: %v", err)
