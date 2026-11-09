@@ -26,7 +26,7 @@ func greetSMTP(r *textproto.Reader, w *textproto.Writer, serverName string) (str
 	_, e = fmt.Sscanf(l, "EHLO %s", &clientName)
 	if e != nil {
 		// HELO, or anything else, can't lead to STARTTLS.
-		return "", fmt.Errorf("%w: expecting EHLO, got %q", ErrNoStartTLS, l)
+		return "", fmt.Errorf("%w: expecting EHLO, got %s", ErrNoStartTLS, commandVerb(l))
 	}
 
 	return clientName, nil
@@ -40,7 +40,7 @@ func negotiateSMTPTLS(r *textproto.Reader, w *textproto.Writer, smtpServerName s
 		return err
 	}
 	if cmd != "STARTTLS" {
-		return fmt.Errorf("%w: expecting STARTTLS, got %q", ErrNoStartTLS, cmd)
+		return fmt.Errorf("%w: expecting STARTTLS, got %s", ErrNoStartTLS, commandVerb(cmd))
 	}
 
 	w.PrintfLine("220 Go ahead")

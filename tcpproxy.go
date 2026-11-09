@@ -509,9 +509,16 @@ func (p *Proxy) serveConn(c net.Conn, cfg *config) bool {
 		br = bufio.NewReader(c)
 	}
 
-	target, hostName := findRoute(cfg.Routes(), br)
+	routes := cfg.Routes()
+	target, hostName := findRoute(routes, br)
 	var reason RejectReason
-	if target == nil && cfg.defaultTarget == nil {
+	switch {
+	case target != nil || cfg.defaultTarget != nil:
+	case len(routes) == 0:
+		// Nothing read from the client, so there's nothing to classify,
+		// and peeking would wait on a live connection.
+		reason = RejectNoRoute
+	default:
 		reason = routeRejectReason(br, hostName)
 	}
 

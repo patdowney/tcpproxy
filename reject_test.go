@@ -211,6 +211,31 @@ func TestOnRejectReportsConnectionsOverCapacity(t *testing.T) {
 	expectRejection(t, got, RejectOverCapacity)
 }
 
+// TestOnRejectClosesAtOnceOnAListenerWithNoRoutes pins that a listener
+// whose routes have all been removed, as when a tunnel disconnects, closes a
+// silent client straight away rather than waiting for it to send something.
+func TestOnRejectClosesAtOnceOnAListenerWithNoRoutes(t *testing.T) {
+	front := newLocalListener(t)
+	defer front.Close()
+
+	p := testProxy(t, front)
+	got := recordRejections(p)
+	p.RemoveRouteById(testFrontAddr, p.AddSNIRoute(testFrontAddr, "example.com", noopTarget{}))
+	if err := p.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+
+	conn, err := net.Dial("tcp", front.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	expectClosedWithin(t, conn, time.Second)
+	expectRejection(t, got, RejectNoRoute)
+}
+
 func TestOnRejectIsNotCalledForRoutedConnections(t *testing.T) {
 	front := newLocalListener(t)
 	defer front.Close()
