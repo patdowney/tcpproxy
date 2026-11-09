@@ -115,6 +115,13 @@ type Proxy struct {
 	// fast instead of exhausting file descriptors. Zero means no limit.
 	MaxConnections int
 
+	// OnReject optionally reports each accepted connection the proxy closes
+	// without handing it to a Target: the address of the listener it
+	// arrived on, as given to the Add*Route methods, and why. It is called
+	// from the connection's own goroutine, so it must be safe for concurrent
+	// use.
+	OnReject func(listenAddr string, reason RejectReason)
+
 	connSlots chan struct{} // nil when MaxConnections is zero
 }
 
@@ -135,13 +142,15 @@ type Matcher func(ctx context.Context, hostname string) bool
 //type TargetLookup func(ctx context.Context, hostname string) (string, error)
 
 // NegotiateFunc runs a plaintext negotiation (e.g. SMTP/IMAP STARTTLS) over c
-// before route matching begins. On success it returns ok=true and, if the
+// before route matching begins. On success it returns a nil error and, if the
 // negotiation itself buffered any reads from c, the *bufio.Reader that holds
 // them so route matching can continue from the same reader instead of losing
 // bytes the client pipelined immediately after the negotiation (e.g. a TLS
 // ClientHello sent in the same write as "STARTTLS"). br may be nil on success
-// if the negotiation did no buffered reads of its own.
-type NegotiateFunc func(gc net.Conn, cfg *config) (br *bufio.Reader, ok bool)
+// if the negotiation did no buffered reads of its own. A client that carries
+// on without asking for TLS should fail it with an error wrapping
+// ErrNoStartTLS.
+type NegotiateFunc func(gc net.Conn, cfg *config) (br *bufio.Reader, err error)
 
 type NegotiateBackendFunc func(src *Conn, dst net.Conn) error
 
@@ -156,6 +165,8 @@ func equals(want string) Matcher {
 type config struct {
 	mu     sync.Mutex
 	routes []routeWithId
+
+	ipPort string
 
 	enableProxyProtocol bool
 	negotiateFunc       NegotiateFunc
@@ -233,7 +244,7 @@ func (p *Proxy) configFor(ipPort string) *config {
 		p.configs = make(map[string]*config)
 	}
 	if p.configs[ipPort] == nil {
-		p.configs[ipPort] = &config{}
+		p.configs[ipPort] = &config{ipPort: ipPort}
 	}
 	return p.configs[ipPort]
 }
@@ -388,6 +399,7 @@ func (p *Proxy) serveListener(ret chan<- error, ln net.Listener, cfg *config) {
 
 		if !p.acquireConnSlot() {
 			p.logger().Printf("tcpproxy: connection limit %d reached; closing conn %v/%v", p.MaxConnections, c.RemoteAddr(), c.LocalAddr())
+			p.reject(cfg, RejectOverCapacity)
 			c.Close()
 			continue
 		}
@@ -484,9 +496,10 @@ func (p *Proxy) serveConn(c net.Conn, cfg *config) bool {
 
 	var br *bufio.Reader
 	if cfg.negotiateFunc != nil {
-		negotiatedBr, ok := cfg.negotiateFunc(c, cfg)
-		if !ok {
-			p.logger().Printf("tcpproxy: negotiation failed for conn %v/%v; closing", c.RemoteAddr().String(), c.LocalAddr().String())
+		negotiatedBr, err := cfg.negotiateFunc(c, cfg)
+		if err != nil {
+			p.logger().Printf("tcpproxy: negotiation failed for conn %v/%v: %v; closing", c.RemoteAddr().String(), c.LocalAddr().String(), err)
+			p.reject(cfg, negotiationRejectReason(err))
 			c.Close()
 			return false
 		}
@@ -497,6 +510,10 @@ func (p *Proxy) serveConn(c net.Conn, cfg *config) bool {
 	}
 
 	target, hostName := findRoute(cfg.Routes(), br)
+	var reason RejectReason
+	if target == nil && cfg.defaultTarget == nil {
+		reason = routeRejectReason(br, hostName)
+	}
 
 	if p.HandshakeTimeout > 0 {
 		// The handshake is over; the proxied session is the Target's to bound.
@@ -528,6 +545,7 @@ func (p *Proxy) serveConn(c net.Conn, cfg *config) bool {
 	} else {
 		p.logger().Printf("tcpproxy: no route matched '%s', conn %v/%v; closing", hostName, c.RemoteAddr().String(), c.LocalAddr().String())
 	}
+	p.reject(cfg, reason)
 
 	c.Close()
 	return false

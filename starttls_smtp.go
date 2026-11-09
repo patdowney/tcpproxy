@@ -25,7 +25,8 @@ func greetSMTP(r *textproto.Reader, w *textproto.Writer, serverName string) (str
 	var clientName string
 	_, e = fmt.Sscanf(l, "EHLO %s", &clientName)
 	if e != nil {
-		return "", e
+		// HELO, or anything else, can't lead to STARTTLS.
+		return "", fmt.Errorf("%w: expecting EHLO, got %q", ErrNoStartTLS, l)
 	}
 
 	return clientName, nil
@@ -39,7 +40,7 @@ func negotiateSMTPTLS(r *textproto.Reader, w *textproto.Writer, smtpServerName s
 		return err
 	}
 	if cmd != "STARTTLS" {
-		return fmt.Errorf("expecting STARTTLS, got %q", cmd)
+		return fmt.Errorf("%w: expecting STARTTLS, got %q", ErrNoStartTLS, cmd)
 	}
 
 	w.PrintfLine("220 Go ahead")
@@ -47,7 +48,7 @@ func negotiateSMTPTLS(r *textproto.Reader, w *textproto.Writer, smtpServerName s
 }
 
 func negotiateSMTPStartTLS(serverName string) NegotiateFunc {
-	return func(c net.Conn, cfg *config) (*bufio.Reader, bool) {
+	return func(c net.Conn, cfg *config) (*bufio.Reader, error) {
 		// Negotiate STARTTLS over a single, larger-than-default buffered
 		// reader, and hand that same reader back on success so route
 		// matching (the SNI peek in sni.go) continues reading from it
@@ -62,11 +63,12 @@ func negotiateSMTPStartTLS(serverName string) NegotiateFunc {
 
 		_, err := greetSMTP(r, w, serverName)
 		if err == nil {
-			if err := negotiateSMTPTLS(r, w, serverName); err == nil {
-				return br, true
-			}
+			err = negotiateSMTPTLS(r, w, serverName)
+		}
+		if err == nil {
+			return br, nil
 		}
 		c.Close()
-		return nil, false
+		return nil, err
 	}
 }
