@@ -54,18 +54,18 @@ func negotiateIMAPTLS(r *textproto.Reader, w *textproto.Writer) error {
 		case "LOGOUT":
 			_ = w.PrintfLine("* BYE Logging out")
 			_ = w.PrintfLine("%s OK LOGOUT completed", tag)
-			return fmt.Errorf("client logged out before STARTTLS")
+			return fmt.Errorf("%w: client logged out", ErrNoStartTLS)
 		default:
 			if err := w.PrintfLine("%s BAD %s is not available before STARTTLS", tag, cmd); err != nil {
 				return err
 			}
 		}
 	}
-	return fmt.Errorf("no STARTTLS after %d commands", maxIMAPPreTLSCommands)
+	return fmt.Errorf("%w: no STARTTLS after %d commands", ErrNoStartTLS, maxIMAPPreTLSCommands)
 }
 
 func negotiateIMAPStartTLS() NegotiateFunc {
-	return func(c net.Conn, cfg *config) (*bufio.Reader, bool) {
+	return func(c net.Conn, cfg *config) (*bufio.Reader, error) {
 		// See negotiateSMTPStartTLS in starttls_smtp.go for why the
 		// negotiation reader is sized above the default 4096 bytes and
 		// reused for the subsequent SNI peek instead of discarded.
@@ -73,11 +73,10 @@ func negotiateIMAPStartTLS() NegotiateFunc {
 		r := textproto.NewReader(br)
 		w := textproto.NewWriter(bufio.NewWriter(c))
 
-		if err := negotiateIMAPTLS(r, w); err == nil {
-			return br, true
+		if err := negotiateIMAPTLS(r, w); err != nil {
+			c.Close()
+			return nil, err
 		}
-
-		c.Close()
-		return nil, false
+		return br, nil
 	}
 }

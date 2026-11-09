@@ -108,7 +108,6 @@ func clientHelloServerName(br *bufio.Reader) (sni string) {
 	if err != nil {
 		return ""
 	}
-	const recordTypeHandshake = 0x16
 	if hdr[0] != recordTypeHandshake {
 		return "" // Not TLS.
 	}
