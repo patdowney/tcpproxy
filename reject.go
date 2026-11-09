@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"errors"
 	"net"
+	"strconv"
+	"strings"
 )
 
 // ErrNoStartTLS is returned by a STARTTLS negotiation when the client goes
@@ -87,4 +89,12 @@ func routeRejectReason(br *bufio.Reader, hostName string) RejectReason {
 	default:
 		return RejectNoSNI
 	}
+}
+
+// commandVerb returns the first word of a client's command line, quoted, for
+// error messages. The rest can hold addresses, such as MAIL FROM's, that
+// shouldn't end up in logs.
+func commandVerb(line string) string {
+	verb, _, _ := strings.Cut(line, " ")
+	return strconv.Quote(verb)
 }
